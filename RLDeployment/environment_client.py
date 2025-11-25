@@ -57,11 +57,39 @@ class EnvironmentClient:
     # -------------------------------
 
     def _parse(self, data):
+        # s = np.array(data.get('stateVector', []), dtype=np.float32)
+        # m = np.array(data.get('actionMask', []), dtype=bool)
+        # if s.shape[0] != STATE_DIM:
+        #     # 补零以防万一
+        #     s = np.resize(s, (STATE_DIM,))
+        # return s, m
+        # 1. 解析状态向量
         s = np.array(data.get('stateVector', []), dtype=np.float32)
+        
+        # [修复] State Padding
+        if s.shape[0] < STATE_DIM:
+            # 计算需要补多少个 0
+            pad_len = STATE_DIM - s.shape[0]
+            # 在末尾补 0
+            padding = np.zeros(pad_len, dtype=np.float32)
+            s = np.concatenate([s, padding])
+        elif s.shape[0] > STATE_DIM:
+            # 截断 (理论上不应发生，除非 Java 端发的数据超过了 config 里的 MAX_NODES)
+            s = s[:STATE_DIM]
+
+        # 2. 解析动作掩码
         m = np.array(data.get('actionMask', []), dtype=bool)
-        if s.shape[0] != STATE_DIM:
-            # 补零以防万一
-            s = np.resize(s, (STATE_DIM,))
+        
+        # [修复] Mask Padding
+        if m.shape[0] < ACTION_DIM:
+            # 计算需要补多少个 False
+            pad_len = ACTION_DIM - m.shape[0]
+            # 在末尾补 False (表示这些补出来的节点不可用)
+            padding_m = np.zeros(pad_len, dtype=bool)
+            m = np.concatenate([m, padding_m])
+        elif m.shape[0] > ACTION_DIM:
+            m = m[:ACTION_DIM]
+            
         return s, m
 
     def stop_server(self):
