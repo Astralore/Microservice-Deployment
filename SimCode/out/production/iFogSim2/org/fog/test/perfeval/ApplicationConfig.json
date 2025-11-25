@@ -1,0 +1,72 @@
+[
+  {
+    "appId": "A0", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2500, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3500, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A1", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2800, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3200, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2200, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A2", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 3000, "mService1_ram": 2048, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3000, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 1800, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A3", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2200, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3800, "mService2_ram": 4096, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A4", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2500, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3500, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A5", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2600, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3400, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2100, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A6", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2400, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3600, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A7", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2500, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3500, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A8", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2900, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3100, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  },
+  {
+    "appId": "A9", "userId": 1, "throughput": 100, "nwLength": 2000.0,
+    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
+    "mService1_mips": 2500, "mService1_ram": 1024, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
+    "mService2_mips": 3500, "mService2_ram": 2048, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
+    "mService3_mips": 2000, "mService3_ram": 1024, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+  }
+]
