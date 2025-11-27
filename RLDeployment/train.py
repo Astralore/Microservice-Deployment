@@ -6,77 +6,101 @@ import json
 import paddle
 import os
 import matplotlib.pyplot as plt 
+from datetime import datetime
 
 from environment_client import EnvironmentClient
 from agent import DuelingDQNAgent 
 from data_logger import DataLogger
-from config import (MAX_EPISODES, BATCH_SIZE, MODEL_SAVE_PATH, MODEL_SAVE_FREQ,
-                    STATE_DIM, ACTION_DIM, EPSILON_DECAY, EPSILON_MIN, START_TRAIN_EPISODE, DATASET_FILE)
+from config import (MAX_EPISODES, BATCH_SIZE, MODEL_SAVE_FREQ,
+                    STATE_DIM, ACTION_DIM, EPSILON_DECAY, EPSILON_MIN, START_TRAIN_EPISODE)
 
-# --- 数据收集函数 ---
-def save_llm_data(description, action, reward):
-    """保存 (Instruction, Input, Output) 三元组用于大模型微调"""
-    if reward > 0 and description:
-        entry = {
-            "instruction": "You are an intelligent scheduler for edge computing. Assign the microservice to the best node.",
-            "input": description,
-            "output": str(action),
-            "reward": reward
-        }
-        try:
-            with open(DATASET_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception as e:
-            print(f"Error saving dataset: {e}")
+class ExperimentManager:
+    """管理实验路径和文件保存"""
+    def __init__(self, base_dir="experiments"):
+        # 生成时间戳文件夹名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.exp_dir = os.path.join(base_dir, timestamp)
+        
+        # 创建文件夹
+        if not os.path.exists(self.exp_dir):
+            os.makedirs(self.exp_dir)
+        
+        print(f"=== Experiment Output Directory: {self.exp_dir} ===")
 
-def plot_training_results(rewards, losses, q_values):
-    """绘制训练过程的收敛情况"""
-    plt.figure(figsize=(15, 10))
+        # 定义各文件的完整路径
+        self.log_file = os.path.join(self.exp_dir, 'rl_training_log.csv')
+        self.dataset_file = os.path.join(self.exp_dir, 'llm_finetuning_data.jsonl')
+        self.model_file = os.path.join(self.exp_dir, 'dueling_dqn_model.pdparams')
+        self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
-    # 子图 1: Episode Returns (Rewards)
-    plt.subplot(3, 1, 1)
-    plt.plot(rewards, label='Episode Reward', color='blue', alpha=0.6)
-    # 绘制移动平均线 (Window=50)
-    if len(rewards) >= 50:
-        moving_avg = np.convolve(rewards, np.ones(50)/50, mode='valid')
-        plt.plot(range(49, len(rewards)), moving_avg, label='Moving Avg (50)', color='red', linewidth=2)
-    plt.title('Convergence of Returns (Total Reward)')
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    plt.legend()
-    plt.grid(True)
+    def save_llm_data(self, description, action, reward):
+        """保存 (Instruction, Input, Output) 三元组到指定文件夹"""
+        if reward > 0 and description:
+            entry = {
+                "instruction": "You are an intelligent scheduler for edge computing. Assign the microservice to the best node.",
+                "input": description,
+                "output": str(action),
+                "reward": reward
+            }
+            try:
+                with open(self.dataset_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                print(f"Error saving dataset: {e}")
 
-    # 子图 2: Average Loss per Episode
-    plt.subplot(3, 1, 2)
-    plt.plot(losses, label='Avg Loss', color='orange')
-    plt.title('Convergence of Loss Function')
-    plt.xlabel('Episode')
-    plt.ylabel('SmoothL1 Loss')
-    plt.legend()
-    plt.grid(True)
+    def plot_results(self, rewards, losses, q_values):
+        """绘制并保存训练图表到指定文件夹"""
+        plt.figure(figsize=(15, 10))
 
-    # 子图 3: Average Q-Value per Episode
-    plt.subplot(3, 1, 3)
-    plt.plot(q_values, label='Avg Q-Value', color='green')
-    plt.title('Convergence of Q-Values')
-    plt.xlabel('Episode')
-    plt.ylabel('Q-Value')
-    plt.legend()
-    plt.grid(True)
+        # 子图 1: Episode Returns
+        plt.subplot(3, 1, 1)
+        plt.plot(rewards, label='Episode Reward', color='blue', alpha=0.6)
+        if len(rewards) >= 50:
+            moving_avg = np.convolve(rewards, np.ones(50)/50, mode='valid')
+            plt.plot(range(49, len(rewards)), moving_avg, label='Moving Avg (50)', color='red', linewidth=2)
+        plt.title('Convergence of Returns (Total Reward)')
+        plt.xlabel('Episode')
+        plt.ylabel('Total Reward')
+        plt.legend()
+        plt.grid(True)
 
-    plt.tight_layout()
-    plt.savefig('training_convergence.png')
-    print("Training visualization saved to 'training_convergence.png'.")
-    # plt.show() # 如果在无头服务器上运行，请保持注释
+        # 子图 2: Loss
+        plt.subplot(3, 1, 2)
+        plt.plot(losses, label='Avg Loss', color='orange')
+        plt.title('Convergence of Loss Function')
+        plt.xlabel('Episode')
+        plt.ylabel('SmoothL1 Loss')
+        plt.legend()
+        plt.grid(True)
+
+        # 子图 3: Q-Value
+        plt.subplot(3, 1, 3)
+        plt.plot(q_values, label='Avg Q-Value', color='green')
+        plt.title('Convergence of Q-Values')
+        plt.xlabel('Episode')
+        plt.ylabel('Q-Value')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.savefig(self.plot_file)
+        print(f"Training visualization saved to '{self.plot_file}'.")
+        # plt.show() 
 
 def train_agent():
     """主训练函数"""
+    # 1. 初始化实验管理器 (自动创建时间戳文件夹)
+    exp_manager = ExperimentManager()
+
     print("Initializing components for PaddlePaddle...")
     env = EnvironmentClient()
     agent = DuelingDQNAgent() 
-    logger = DataLogger()
+    
+    # 2. 覆盖默认路径，使用实验文件夹下的路径
+    logger = DataLogger(filename=exp_manager.log_file)
 
-    agent.load_model() 
+    # 尝试加载之前的模型（这里可以根据需要修改，如果是新实验通常不加载旧模型，或者指定路径加载）
+    # agent.load_model() 
 
     # --- 训练指标记录 ---
     history_rewards = []
@@ -88,7 +112,8 @@ def train_agent():
 
     try:
         for episode in range(1, MAX_EPISODES + 1):
-            state, mask = env.reset()
+            state, mask, info = env.reset()
+            
             if state is None or mask is None:
                 print(f"Episode {episode}: Failed reset. Stopping.")
                 break
@@ -119,7 +144,7 @@ def train_agent():
                     action = agent.select_action(state, mask, explore=True)
 
                 # 环境步进
-                next_state, next_mask, reward, done, info = env.step(action)
+                next_state, next_mask, reward, done, next_info = env.step(action)
 
                 if next_state is None or next_mask is None:
                     print(f"Episode {episode}, Step {step}: Env step failed. Ending episode.")
@@ -128,16 +153,16 @@ def train_agent():
                 # 存储经验
                 agent.remember(state, action, reward, next_state, done, mask, next_mask)
                 
-                # 记录 Q 值 (用于分析收敛性)
+                # 记录 Q 值
                 q_value = agent.get_q_value(state, action)
                 episode_q_values.append(q_value)
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
 
-                # 收集大模型数据
+                # 收集大模型数据 (使用 exp_manager 保存到独立文件)
                 if episode >= START_TRAIN_EPISODE and "description" in info:
-                    save_llm_data(info["description"], action, reward)
+                    exp_manager.save_llm_data(info["description"], action, reward)
 
                 if done:
                     if np.any(mask): 
@@ -148,8 +173,9 @@ def train_agent():
 
                 state = next_state
                 mask = next_mask
+                info = next_info # 更新 info 以便下一步获取 description
 
-                # --- 训练网络并捕获 Loss ---
+                # --- 训练网络 ---
                 if episode >= START_TRAIN_EPISODE and len(agent.memory) >= BATCH_SIZE:
                     loss_val = agent.train()
                     if loss_val is not None:
@@ -175,8 +201,9 @@ def train_agent():
             if episode % 10 == 0:
                 print(f"Ep {episode}: Reward={total_reward:.2f} | Avg Loss={avg_loss:.4f} | Avg Q={avg_q:.4f} | Epsilon={agent.epsilon:.4f} | Time={episode_duration:.1f}s")
 
+            # 3. 保存模型到实验文件夹
             if episode % MODEL_SAVE_FREQ == 0:
-                agent.save_model()
+                agent.save_model(filepath=exp_manager.model_file)
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
@@ -187,12 +214,12 @@ def train_agent():
     finally:
         total_training_time = time.time() - start_time
         print(f"\nTraining finished. Total time: {total_training_time:.2f}s")
-        print("Saving final model...")
-        agent.save_model()
+        print(f"Saving final model to {exp_manager.model_file}...")
+        agent.save_model(filepath=exp_manager.model_file)
         
-        # --- 绘制并保存收敛图 ---
+        # --- 绘制并保存到实验文件夹 ---
         print("Generating convergence plots...")
-        plot_training_results(history_rewards, history_losses, history_q_values)
+        exp_manager.plot_results(history_rewards, history_losses, history_q_values)
         
         try:
             env.stop_server()
