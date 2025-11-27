@@ -23,10 +23,32 @@ class EnvironmentClient:
         try:
             resp = self.session.post(f"{self.base_url}/reset", timeout=10)
             data = resp.json()
-            return self._parse(data)
+            
+            # 兼容逻辑：尝试从不同位置获取状态数据
+            # 有些 Java 实现直接返回 stateVector，有些包裹在 nextStateRepresentation 中
+            ns = data
+            if 'nextStateRepresentation' in data:
+                ns = data['nextStateRepresentation']
+            elif 'stateVector' not in data:
+                # 如果既没有 nextStateRepresentation 也没有 stateVector，可能是包裹在 data 自身
+                pass 
+                
+            # 解析状态和掩码
+            state, mask = self._parse(ns)
+            
+            # 提取描述信息 (用于 LLM)
+            description = ns.get('description', "")
+            # 如果 ns 里没有，尝试从最外层 data 找
+            if not description:
+                description = data.get('description', "")
+                
+            info = {"description": description}
+            
+            return state, mask, info # [修复] 返回 3 个值
+            
         except Exception as e:
             print(f"Reset error: {e}")
-            return None, None
+            return None, None, {} # [修复] 异常时也返回 3 个值
 
     def step(self, action):
         try:
