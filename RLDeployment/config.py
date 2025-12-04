@@ -19,10 +19,10 @@ ACTION_DIM = MAX_DEPLOYABLE_NODES
 
 # --- Dueling DQN 超参数 ---
 GAMMA = 0.99                # 折扣因子 (Discount factor)
-LEARNING_RATE = 0.0001       # Adam 优化器的学习率
+LEARNING_RATE = 0.00005       # Adam 优化器的学习率
 BUFFER_SIZE = 50000         # 经验回放缓冲区的最大容量
-BATCH_SIZE = 64             # 每次训练时从缓冲区采样的批次大小
-TARGET_UPDATE_FREQ = 20     # 目标网络更新频率 (以 Episodes 为单位)
+BATCH_SIZE = 128             # 每次训练时从缓冲区采样的批次大小
+TARGET_UPDATE_FREQ = 100     # 目标网络更新频率 (以 Episodes 为单位)
 GRAD_CLIP_NORM = 1.0
 # --- Epsilon-Greedy 探索策略参数 ---
 EPSILON_START = 1.0         # 初始探索率

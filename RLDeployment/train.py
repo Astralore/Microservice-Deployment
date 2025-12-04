@@ -114,6 +114,25 @@ def train_agent():
         for episode in range(1, MAX_EPISODES + 1):
             state, mask, info = env.reset()
             
+            # --- [新增] 动态环境模拟 ---
+            # 随机 Mask 掉一些边缘节点，模拟节点掉线，强迫 RL 学习鲁棒策略
+            if episode < MAX_EPISODES: 
+                valid_indices = np.where(mask)[0]
+                # 假设前 2 个是 Cloud/Gateway，不 mask
+                candidates = valid_indices[2:]
+                
+                if len(candidates) > 5:
+                    # 随机掉线 0 到 5 个节点
+                    num_drop = np.random.randint(0, 6)
+                    if num_drop > 0:
+                        drop_indices = np.random.choice(candidates, num_drop, replace=False)
+                        mask[drop_indices] = False
+                        # 可选：将对应 State 置 0
+                        for idx in drop_indices:
+                            state[idx*2] = 0.0
+                            state[idx*2+1] = 0.0
+            # ---------------------------
+            
             if state is None or mask is None:
                 print(f"Episode {episode}: Failed reset. Stopping.")
                 break

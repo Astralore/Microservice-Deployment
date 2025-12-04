@@ -77,6 +77,7 @@ public class MicroservicePlacement {
     static boolean trace_flag = false;
 
     public static void main(String[] args) {
+        System.out.println(">>> CODE UPDATED: EdgeGateways = " + edgeGateways);
         Log.printLine("Starting MicroservicePlacement...");
 
         try {
@@ -138,7 +139,7 @@ public class MicroservicePlacement {
                 // 索引递增
                 appIndex++;
             }
-
+            System.out.println("DEBUG: fogDevices list size in Main = " + fogDevices.size());
             // 4. 初始化 Controller
             MicroservicesController controller = new MicroservicesController(
                     "controller",
@@ -242,12 +243,18 @@ public class MicroservicePlacement {
                 FogDevice edge = createFogDeviceHelper("edge-node-" + i + "-" + j, mips, ram, 2000, 2000, 2, 0.0,
                         busyPwr, idlePwr, // 使用异构能耗
                         MicroserviceFogDevice.FCN);
+                if (edge == null) {
+                    System.out.println("ERROR: Edge node creation failed for " + i + "-" + j);
+                    continue;
+                }
                 edge.setParentId(gateway.getId());
                 edge.setUplinkLatency(gatewayToEdgeNodeLatency);
                 edge.setLevel(2);
                 fogDevices.add(edge);
             }
+            System.out.println("DEBUG: Finished Gateway-" + i + " loop. List size: " + fogDevices.size());
         }
+        System.out.println("DEBUG: createFogDevices Finished. Final List size: " + fogDevices.size());
     }
 
     private static FogDevice createFogDeviceHelper(String nodeName, long mips, int ram, long upBw, long downBw, int level, double ratePerMips, double busyPower, double idlePower, String deviceType) {
