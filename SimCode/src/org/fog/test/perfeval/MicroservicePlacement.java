@@ -48,15 +48,24 @@ public class MicroservicePlacement {
     static List<Sensor> sensors = new ArrayList<Sensor>();
     static List<Actuator> actuators = new ArrayList<Actuator>();
 
-    static int edgeGateways = 1;
-    static Integer[] edgeNodesPerGateway = new Integer[]{10}; // 10个边缘节点
+    static int edgeGateways = 4;
+    static Integer[] edgeNodesPerGateway = new Integer[]{11, 11, 11, 11};
     static Integer[] endDevicesPerEdgeNode = new Integer[]{3, 2, 3, 2, 1, 1};
 
     private static int edgeNodeIndex = 0;
     static boolean heterogeneousEdgeNodes = true;
 
-    static Integer[] edgeNodeCpus = new Integer[]{2000, 2500, 4000, 2200, 3800, 2000, 3000, 2500, 4200, 2000};
-    static Integer[] edgeNodeRam = new Integer[]{2048, 2048, 4096, 2048, 8192, 2048, 4096, 2048, 8192, 2048};
+    // 包含低配(1800)、中配(2800-3200)、高配(3800-4200)
+    static Integer[] edgeNodeCpus = new Integer[]{1800, 2800, 4000, 2200, 3000, 3200, 4200, 2000, 2800, 3800};
+    static Integer[] edgeNodeRam = new Integer[]{2048, 4096, 8192, 2048, 4096, 4096, 8192, 2048, 4096, 8192};
+
+    // 高性能 = 高能耗，迫使 RL 学会权衡
+    static Double[] edgeNodeBusyPower = new Double[]{
+            80.0,  110.0, 250.0, 85.0,  120.0, 130.0, 280.0, 60.0,  115.0, 240.0
+    };
+    static Double[] edgeNodeIdlePower = new Double[]{
+            50.0,  80.0,  180.0, 55.0,  85.0,  90.0,  200.0, 40.0,  82.0,  170.0
+    };
 
     static Integer deviceNum = 0;
 
@@ -82,26 +91,23 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 2. 读取配置
-            // 请确保路径正确，如果报错请改为绝对路径
             List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
             List<PlacementRequest> placementRequests = new ArrayList<>();
 
-            // 获取边缘节点列表
+            // 获取边缘节点列表并排序，保证分配顺序确定
             List<FogDevice> edgeNodes = new ArrayList<>();
             for(FogDevice d : fogDevices) {
                 if(d.getName().startsWith("edge-node")) edgeNodes.add(d);
             }
-
-            // [新增] 按照 ID 排序，确保 edgeNodes 顺序固定 (0-0, 0-1, 0-2...)
             edgeNodes.sort((a, b) -> Integer.compare(a.getId(), b.getId()));
 
             System.out.println("Available Edge Nodes for Clients: " + edgeNodes.size());
 
             // 3. 批量创建应用 (A0-A9)
-            // [修复] 使用索引进行轮询分配
+            // [修复] 使用索引进行轮询分配，防止负载不均
             int appIndex = 0;
 
             for (Map<String, Object> appParams : appParamsList) {
@@ -205,6 +211,7 @@ public class MicroservicePlacement {
     }
 
     private static void createFogDevices(int userId, String appId) {
+        // Cloud 节点配置
         FogDevice cloud = createFogDeviceHelper("cloud", 100000, 40000, 10000, 10000, 0, 0.01, 100, 100, MicroserviceFogDevice.CLOUD);
         cloud.setParentId(-1);
         cloud.setLevel(0);
@@ -219,13 +226,22 @@ public class MicroservicePlacement {
 
             int nodesCount = (i < edgeNodesPerGateway.length) ? edgeNodesPerGateway[i] : edgeNodesPerGateway[0];
             for (int j = 0; j < nodesCount; j++) {
+                // [修改] 获取对应索引的配置 (CPU, RAM, Power)
                 int cpuPos = deviceNum % edgeNodeCpus.length;
                 int ramPos = deviceNum % edgeNodeRam.length;
+                int pwrPos = deviceNum % edgeNodeBusyPower.length; // 新增能耗索引
+
                 long mips = edgeNodeCpus[cpuPos];
                 int ram = edgeNodeRam[ramPos];
+                double busyPwr = edgeNodeBusyPower[pwrPos];
+                double idlePwr = edgeNodeIdlePower[pwrPos];
+
                 deviceNum++;
 
-                FogDevice edge = createFogDeviceHelper("edge-node-" + i + "-" + j, mips, ram, 2000, 2000, 2, 0.0, 107, 83, MicroserviceFogDevice.FCN);
+                // [修改] 传入动态能耗参数
+                FogDevice edge = createFogDeviceHelper("edge-node-" + i + "-" + j, mips, ram, 2000, 2000, 2, 0.0,
+                        busyPwr, idlePwr, // 使用异构能耗
+                        MicroserviceFogDevice.FCN);
                 edge.setParentId(gateway.getId());
                 edge.setUplinkLatency(gatewayToEdgeNodeLatency);
                 edge.setLevel(2);

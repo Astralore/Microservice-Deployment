@@ -95,8 +95,13 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         System.out.println("\n=== RL Logic Initialized ===");
         System.out.println("Total FogDevices: " + fogDevices.size());
         System.out.println("Deployable Nodes (Candidate Actions): " + deployableNodes.size());
-        for(FogDevice d : deployableNodes) {
-            System.out.println(" - [" + d.getId() + "] " + d.getName() + " (Level: " + d.getLevel() + ")");
+        // 打印前5个和后5个，避免刷屏
+        if (deployableNodes.size() > 10) {
+            for(int i=0; i<5; i++) System.out.println(" - [" + deployableNodes.get(i).getId() + "] " + deployableNodes.get(i).getName());
+            System.out.println(" ... (omitted) ...");
+            for(int i=deployableNodes.size()-5; i<deployableNodes.size(); i++) System.out.println(" - [" + deployableNodes.get(i).getId() + "] " + deployableNodes.get(i).getName());
+        } else {
+            for(FogDevice d : deployableNodes) System.out.println(" - [" + d.getId() + "] " + d.getName());
         }
         System.out.println("==============================\n");
 
