@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random; // [新增]
+import java.util.Random;
 
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Log;
@@ -37,7 +37,7 @@ import org.fog.scheduler.StreamOperatorScheduler;
 import org.fog.utils.FogLinearPowerModel;
 import org.fog.utils.FogUtils;
 import org.fog.utils.TimeKeeper;
-import org.fog.utils.distribution.DeterministicDistribution; // [新增]
+import org.fog.utils.distribution.DeterministicDistribution;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -48,17 +48,13 @@ public class MicroservicePlacement {
     static List<Sensor> sensors = new ArrayList<Sensor>();
     static List<Actuator> actuators = new ArrayList<Actuator>();
 
-    // --- [保留原有拓扑定义] ---
     static int edgeGateways = 1;
-    // [修改]: 改为 10，以创建 10 个边缘节点供 10 个应用竞争
-    static Integer[] edgeNodesPerGateway = new Integer[]{10};
-    // [保留]: 原本的 sensor 生成逻辑被 createSensorAndActuator 替代，但保留变量定义不删
+    static Integer[] edgeNodesPerGateway = new Integer[]{10}; // 10个边缘节点
     static Integer[] endDevicesPerEdgeNode = new Integer[]{3, 2, 3, 2, 1, 1};
 
     private static int edgeNodeIndex = 0;
     static boolean heterogeneousEdgeNodes = true;
 
-    // [保留并扩展]: 资源池
     static Integer[] edgeNodeCpus = new Integer[]{2000, 2500, 4000, 2200, 3800, 2000, 3000, 2500, 4200, 2000};
     static Integer[] edgeNodeRam = new Integer[]{2048, 2048, 4096, 2048, 8192, 2048, 4096, 2048, 8192, 2048};
 
@@ -80,65 +76,74 @@ public class MicroservicePlacement {
             Calendar calendar = Calendar.getInstance();
             CloudSim.init(num_user, calendar, trace_flag);
 
-            String appId = "A0"; // 默认ID
+            String appId = "A0";
 
-            // 1. 创建物理环境 (使用原有逻辑)
+            // 1. 创建物理环境
             createFogDevices(1, appId);
 
             // 2. 读取配置
+            // 请确保路径正确，如果报错请改为绝对路径
             List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
             List<PlacementRequest> placementRequests = new ArrayList<>();
 
-            // 获取边缘节点列表 (用于放置 Client)
+            // 获取边缘节点列表
             List<FogDevice> edgeNodes = new ArrayList<>();
             for(FogDevice d : fogDevices) {
-                // 这里的判断逻辑是根据名字，保持简单
                 if(d.getName().startsWith("edge-node")) edgeNodes.add(d);
             }
 
-            Random rand = new Random();
+            // [新增] 按照 ID 排序，确保 edgeNodes 顺序固定 (0-0, 0-1, 0-2...)
+            edgeNodes.sort((a, b) -> Integer.compare(a.getId(), b.getId()));
 
-            // 3. [修改] 批量创建应用 (A0-A9)
+            System.out.println("Available Edge Nodes for Clients: " + edgeNodes.size());
+
+            // 3. 批量创建应用 (A0-A9)
+            // [修复] 使用索引进行轮询分配
+            int appIndex = 0;
+
             for (Map<String, Object> appParams : appParamsList) {
                 String currentAppId = (String) appParams.get("appId");
                 int userId = ((Long) appParams.get("userId")).intValue();
 
-                // 创建 3级微服务链应用
+                // 创建应用
                 Application app = createApplication(currentAppId, userId, appParams);
                 applications.add(app);
 
-                // 随机选一个边缘节点放 Client
-                FogDevice clientNode = edgeNodes.get(rand.nextInt(edgeNodes.size()));
+                // [修复逻辑] 强制均匀分配：App 0 -> Node 0, App 1 -> Node 1 ...
+                if (edgeNodes.isEmpty()) throw new RuntimeException("No edge nodes found!");
+
+                FogDevice clientNode = edgeNodes.get(appIndex % edgeNodes.size());
                 int clientNodeId = clientNode.getId();
 
-                // [新增] 必须创建 Sensor/Actuator
+                System.out.println("Deploying " + currentAppId + " Client/Sensor to " + clientNode.getName() + " (ID: " + clientNodeId + ")");
+
+                // 创建 Sensor/Actuator 并绑定到该边缘节点
                 createSensorAndActuator(currentAppId, userId, clientNodeId);
 
                 Map<String, Integer> placedMap = new HashMap<>();
                 placedMap.put("client", clientNodeId);
 
-                // [修复] PlacementRequest 构造函数传入 int 类型的 gatewayId
                 PlacementRequest req = new PlacementRequest(app.getAppId(), 0, clientNodeId, placedMap);
                 placementRequests.add(req);
 
-                System.out.println("Initialized " + currentAppId + " on " + clientNode.getName());
+                // 索引递增
+                appIndex++;
             }
 
-            // 4. [修复] 初始化 Controller
+            // 4. 初始化 Controller
             MicroservicesController controller = new MicroservicesController(
                     "controller",
                     fogDevices,
                     sensors,
-                    applications, // 第4个参数是 applications List
-                    new ArrayList<Integer>(), // clusterLevels
+                    applications,
+                    new ArrayList<Integer>(),
                     clusterLatency,
-                    PlacementLogicFactory.RL_PLACEMENT // 使用 RL 策略 ID
+                    PlacementLogicFactory.RL_PLACEMENT
             );
 
-            // 提交所有请求
             controller.submitPlacementRequests(placementRequests, 0);
 
             // 5. 运行
@@ -153,44 +158,37 @@ public class MicroservicePlacement {
         }
     }
 
-    // [新增] 辅助方法：创建 Sensor 和 Actuator
     private static void createSensorAndActuator(String appId, int userId, int parentDeviceId) {
-        // Sensor 产生数据
         Sensor sensor = new Sensor("s-" + appId, "sensor_data", userId, appId, new DeterministicDistribution(5));
         sensor.setGatewayDeviceId(parentDeviceId);
         sensor.setLatency(endDeviceToEdgeNodeLatency);
         sensors.add(sensor);
 
-        // Actuator 接收数据
         Actuator actuator = new Actuator("a-" + appId, userId, appId, "actuator");
         actuator.setGatewayDeviceId(parentDeviceId);
         actuator.setLatency(endDeviceToEdgeNodeLatency);
         actuators.add(actuator);
     }
 
-    // [修改] 创建应用逻辑：支持 3 级链条
     private static Application createApplication(String appId, int userId, Map<String, Object> params) {
         Application application = new Application(appId, userId);
 
         int m1Mips = ((Long) params.getOrDefault("mService1_mips", 2500L)).intValue();
         int m2Mips = ((Long) params.getOrDefault("mService2_mips", 3500L)).intValue();
-        // 读取 mService3，默认 2000
         int m3Mips = ((Long) params.getOrDefault("mService3_mips", 2000L)).intValue();
 
         application.addAppModule("client", 128, 500, 100);
         application.addAppModule("mService1", 1024, m1Mips, 1000);
         application.addAppModule("mService2", 2048, m2Mips, 1000);
-        application.addAppModule("mService3", 1024, m3Mips, 1000); // 新增
+        application.addAppModule("mService3", 1024, m3Mips, 1000);
 
-        // 边: Sensor -> Client -> m1 -> m2 -> m3 -> Client -> Actuator
         application.addAppEdge("sensor", "client", 100, 200, "sensor_data", Tuple.UP, AppEdge.SENSOR);
         application.addAppEdge("client", "mService1", 2000, 1000, "c_m1", Tuple.UP, AppEdge.MODULE);
         application.addAppEdge("mService1", "mService2", 2500, 1000, "m1_m2", Tuple.UP, AppEdge.MODULE);
-        application.addAppEdge("mService2", "mService3", 2000, 1000, "m2_m3", Tuple.UP, AppEdge.MODULE); // 新增
-        application.addAppEdge("mService3", "client", 1000, 500, "m3_c", Tuple.DOWN, AppEdge.MODULE); // 新增
+        application.addAppEdge("mService2", "mService3", 2000, 1000, "m2_m3", Tuple.UP, AppEdge.MODULE);
+        application.addAppEdge("mService3", "client", 1000, 500, "m3_c", Tuple.DOWN, AppEdge.MODULE);
         application.addAppEdge("client", "actuator", 100, 200, "action", Tuple.DOWN, AppEdge.ACTUATOR);
 
-        // 映射
         application.addTupleMapping("client", "sensor_data", "c_m1", new FractionalSelectivity(1.0));
         application.addTupleMapping("mService1", "c_m1", "m1_m2", new FractionalSelectivity(1.0));
         application.addTupleMapping("mService2", "m1_m2", "m2_m3", new FractionalSelectivity(1.0));
@@ -206,15 +204,12 @@ public class MicroservicePlacement {
         return application;
     }
 
-    // [修改] 使用 createFogDeviceHelper 适配新构造函数，同时保留原有拓扑循环
     private static void createFogDevices(int userId, String appId) {
-        // Cloud
         FogDevice cloud = createFogDeviceHelper("cloud", 100000, 40000, 10000, 10000, 0, 0.01, 100, 100, MicroserviceFogDevice.CLOUD);
         cloud.setParentId(-1);
         cloud.setLevel(0);
         fogDevices.add(cloud);
 
-        // [保持原结构] 循环创建 Gateway 和 EdgeNodes
         for (int i = 0; i < edgeGateways; i++) {
             FogDevice gateway = createFogDeviceHelper("gateway-" + i, 20000, 8000, 10000, 10000, 1, 0.0, 107, 83, MicroserviceFogDevice.FON);
             gateway.setParentId(cloud.getId());
@@ -239,8 +234,6 @@ public class MicroservicePlacement {
         }
     }
 
-    // [修复] 适配 MicroserviceFogDevice 构造函数
-    // 原名 createFogDevice 改为 createFogDeviceHelper 避免混淆
     private static FogDevice createFogDeviceHelper(String nodeName, long mips, int ram, long upBw, long downBw, int level, double ratePerMips, double busyPower, double idlePower, String deviceType) {
         List<Pe> peList = new ArrayList<Pe>();
         peList.add(new Pe(0, new PeProvisionerOverbooking(mips)));
@@ -251,7 +244,6 @@ public class MicroservicePlacement {
         FogDeviceCharacteristics characteristics = new FogDeviceCharacteristics("x86", "Linux", "Xen", host, 10.0, 3.0, 0.05, 0.001, 0.0);
 
         try {
-            // 这里的 0 是 clusterLinkBandwidth，0 是 uplinkLatency (外部设置)
             return new MicroserviceFogDevice(nodeName, characteristics, new AppModuleAllocationPolicy(hostList), new LinkedList<Storage>(), 10, upBw, downBw, 0, 0, ratePerMips, deviceType);
         } catch (Exception e) {
             e.printStackTrace();
