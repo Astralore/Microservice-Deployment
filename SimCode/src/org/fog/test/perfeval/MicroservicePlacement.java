@@ -56,7 +56,7 @@ public class MicroservicePlacement {
     static boolean heterogeneousEdgeNodes = true;
 
     // 包含低配(1800)、中配(2800-3200)、高配(3800-4200)
-    static Integer[] edgeNodeCpus = new Integer[]{1800, 2800, 4000, 2200, 3000, 3200, 4200, 2000, 2800, 3800};
+    static Integer[] edgeNodeCpus = new Integer[]{1800, 3600, 4000, 2200, 3500, 3800, 4500, 2000, 3600, 3800};
     static Integer[] edgeNodeRam = new Integer[]{2048, 4096, 8192, 2048, 4096, 4096, 8192, 2048, 4096, 8192};
 
     // 高性能 = 高能耗，迫使 RL 学会权衡

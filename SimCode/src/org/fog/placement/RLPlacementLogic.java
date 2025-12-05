@@ -209,6 +209,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         if (currentModuleIndex >= placementQueue.size())
             return new ActionResult(null, 0, true);
 
+        // Padding 处理：如果选了不存在的节点，给予重罚
         if (actionNodeIndex >= deployableNodes.size()) {
             return new ActionResult(buildStateRepresentation("Invalid Action"), -100.0, false);
         }
@@ -221,6 +222,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         double totalMips = node.getHost().getTotalMips();
 
         // 3. 资源预判 (CPU & RAM)
+        // 只有当剩余资源足够容纳当前微服务时，才算部署成功
         boolean enoughCpu = (totalMips - currentMips) >= curr.moduleObj.getMips();
         boolean enoughRam = (node.getHost().getRam() - currentRamLoad.getOrDefault(node.getId(), 0)) >= curr.moduleObj.getRam();
 
@@ -228,8 +230,9 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         String desc;
 
         if (enoughCpu && enoughRam) {
-            // --- 资源足够，部署成功 ---
+            // 更新模拟环境的负载状态
             updateSimulatedLoad(node.getId(), curr.moduleObj);
+            // 记录决策结果 (用于链路亲和性计算)
             currentPlacementMap.put(curr.getKey(), node.getId());
 
             // A. 基础生存分 (Base Survival Reward)
@@ -248,10 +251,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             } else {
                 latencyPenalty = 0.0;
             }
-
             // D. 能耗惩罚 (Energy Penalty) - 归一化到 0-10 分
-            // 估算当前任务带来的能耗。
-            // 根据 MicroservicePlacement.java 的设定：
             // Low Spec: Idle 50W, Busy 80W
             // High Spec: Idle 180W, Busy 250W
             double idlePwr = 50.0; // 默认低配
@@ -267,7 +267,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             // 计算该任务占用的功耗份额
             double cpuUsageFraction = curr.moduleObj.getMips() / totalMips;
             double estimatedPowerCost = (busyPwr - idlePwr) * cpuUsageFraction + idlePwr * 0.1; // 加上一点待机基数
-
             // 映射：假设最大能耗代价约为 50W-100W，我们将其缩放到 0-10 分
             // 250W 的节点跑满可能扣 10 分，50W 的节点跑满扣 2 分
             double energyPenalty = (estimatedPowerCost / 100.0) * 5.0;
@@ -310,6 +309,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             double newUtilization = (currentMips + curr.moduleObj.getMips()) / totalMips;
             double lbBonus = (1.0 - newUtilization) * 5.0;
 
+            // --- 最终公式汇总 ---
             // 理想情况 (边缘本地): 50 + 5 - 2 - 0 - 0 = 53
             // 兜底情况 (云端):     50 + 5 - 5 - 20 - 15 = 15
             // 失败情况:           -100
@@ -331,7 +331,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         currentModuleIndex++;
         boolean done = (currentModuleIndex >= placementQueue.size());
 
-        // 全局完成奖励 (可选，给一点点甜头)
         if (done && reward > 0) reward += 5.0;
 
         return new ActionResult(buildStateRepresentation(desc), reward, done);
@@ -353,13 +352,20 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
                 FogDevice dev = deployableNodes.get(i);
                 double total = dev.getHost().getTotalMips();
                 double used = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
+                // 1. CPU 剩余率 (Availability)
                 state.add((total - used) / total);
-                // [优化] 把节点层级也加入 State，帮助 RL 区分 Cloud 和 Edge
-                // Level 0=Cloud, 1=Gateway, 2=Edge. 归一化到 0-1
+
+                // 2. 节点绝对能力 (Capacity) - 归一化
+                // 假设最大 MIPS 约 5000, 最大 RAM 约 8192
+                state.add(total / 5000.0);
+                state.add(dev.getHost().getRam() / 8192.0);
+
+                // 3. 节点层级 (Location)
                 state.add(dev.getLevel() / 2.0);
+
                 mask.add(true);
             } else {
-                state.add(0.0); state.add(0.0);
+                state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
                 mask.add(false);
             }
         }

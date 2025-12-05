@@ -16,7 +16,7 @@ from config import (MAX_EPISODES, BATCH_SIZE, MODEL_SAVE_FREQ,
 
 class ExperimentManager:
     """管理实验路径和文件保存"""
-    def __init__(self, base_dir="experiments"):
+    def __init__(self, base_dir="D:/Code/MD_DATA/experiments"):
         # 生成时间戳文件夹名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.exp_dir = os.path.join(base_dir, timestamp)
