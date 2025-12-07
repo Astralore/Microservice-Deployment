@@ -366,6 +366,59 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             globalServiceList.add(new Pair<>(moduleName, nodeId));
         }
         for(FogDevice dev : this.fogDevices) serviceDiscoveryInfo.put(dev.getId(), new ArrayList<>(globalServiceList));
+        // [新增] 打印最终部署方案报表 (Human-Readable Report)
+        // =========================================================================
+        System.out.println("\n\n");
+        System.out.println("################################################################");
+        System.out.println("#                 FINAL RL DEPLOYMENT REPORT                   #");
+        System.out.println("################################################################");
+        System.out.printf("%-10s | %-15s | %-10s | %-10s%n", "App ID", "Microservice", "Node ID", "Node Type");
+        System.out.println("----------------------------------------------------------------");
+
+        // 对 Key 进行排序 (A0_mService1, A0_mService2...)
+        List<String> sortedKeys = new ArrayList<>(currentPlacementMap.keySet());
+        Collections.sort(sortedKeys);
+
+        int edgeCount = 0;
+        int cloudCount = 0;
+        int gatewayCount = 0;
+
+        for (String key : sortedKeys) {
+            // 过滤掉 sensor 和 client，我们只关心核心微服务的去向
+            if (key.contains("sensor") || key.contains("client") || key.startsWith("s-")) continue;
+
+            int nodeId = currentPlacementMap.get(key);
+            String[] parts = key.split("_");
+            String appId = parts[0];
+            String moduleName = (parts.length > 1) ? parts[1] : key;
+
+            // 判断节点类型 (根据 ID 范围推断，需根据您实际 ID 修改，通常 Cloud=2)
+            String nodeType = "EDGE";
+            FogDevice device = fogDeviceMap.get(nodeId);
+
+            if (device != null) {
+                if (device.getName().toLowerCase().contains("cloud")) {
+                    nodeType = "\u001B[31mCLOUD\u001B[0m"; // 红色高亮
+                    cloudCount++;
+                } else if (device.getName().toLowerCase().contains("gateway")) {
+                    nodeType = "\u001B[33mGATEWAY\u001B[0m"; // 黄色高亮
+                    gatewayCount++;
+                } else {
+                    nodeType = "\u001B[32mEDGE\u001B[0m";   // 绿色高亮
+                    edgeCount++;
+                }
+            }
+
+            System.out.printf("%-10s | %-15s | %-10d | %s%n", appId, moduleName, nodeId, nodeType);
+        }
+        System.out.println("----------------------------------------------------------------");
+        System.out.println("Summary Statistics:");
+        System.out.println("  - Edge    : " + edgeCount);
+        System.out.println("  - Gateway : " + gatewayCount);
+        System.out.println("  - Cloud   : " + cloudCount);
+        System.out.println("################################################################\n\n");
+        // =========================================================================
+
         return new PlacementLogicOutput(perDevice, serviceDiscoveryInfo, new HashMap<>());
     }
 
