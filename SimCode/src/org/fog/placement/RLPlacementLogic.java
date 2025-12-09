@@ -112,26 +112,28 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         this.currentRamLoad = new HashMap<>();
         this.currentModuleIndex = 0;
 
-//        Random rand = new Random();
-//        for (FogDevice dev : deployableNodes) {
-//            double totalMips = dev.getHost().getTotalMips();
-//            double loadFactor = 0.0;
-//            double dice = rand.nextDouble();
-//            if (dice < 0.3) loadFactor = 0.1 + rand.nextDouble() * 0.2;
-//            else if (dice < 0.8) loadFactor = 0.5 + rand.nextDouble() * 0.4;
-//            else loadFactor = 0.92 + rand.nextDouble() * 0.08;
-//
-//            if (dev.getName().toLowerCase().contains("cloud")) loadFactor = 0.05;
-//
-//            currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
-//            currentRamLoad.put(dev.getId(), (int)(dev.getHost().getRam() * loadFactor));
-//        }
+        Random rand = new Random();
         for (FogDevice dev : deployableNodes) {
-            // 初始负载设为 0 (完全空闲)
-            currentCpuLoad.put(dev.getId(), 0.0);
-            currentRamLoad.put(dev.getId(), 0);
-        }
+            double totalMips = dev.getHost().getTotalMips();
+            double loadFactor = 0.0;
 
+            if (dev.getName().toLowerCase().contains("cloud")) {
+                loadFactor = 0.01;
+            } else if (dev.getName().toLowerCase().contains("gateway")) {
+                loadFactor = 0.1 + rand.nextDouble() * 0.2;
+            } else {
+                // [微调] 仅修改这一行：边缘节点 0% - 25% 随机负载
+                loadFactor = rand.nextDouble() * 0.25;
+            }
+
+            currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
+            currentRamLoad.put(dev.getId(), (int)(dev.getHost().getRam() * loadFactor));
+        }
+//        for (FogDevice dev : deployableNodes) {
+//            // 初始负载设为 0 (完全空闲)
+//            currentCpuLoad.put(dev.getId(), 0.0);
+//            currentRamLoad.put(dev.getId(), 0);
+//        }
         Set<String> placedModules = new HashSet<>();
         for (PlacementRequest req : requests) {
             Application app = applicationInfo.get(req.getApplicationId());
@@ -268,80 +270,300 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
     }
 
     // [新增] 生成环境快照 (Prompt)
+//    private String generateEnvironmentDescription(QueuedModule curr) {
+//        StringBuilder sb = new StringBuilder();
+//        sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
+//                curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
+//        sb.append("Nodes Status (Top 15 relevant):\n");
+//
+//        int count = 0;
+//        for (FogDevice node : deployableNodes) {
+//            // 简单筛选：只展示 Cloud 和有一定空闲的 Edge，防止Prompt太长
+//            if (count > 15) break;
+//
+//            double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
+//            double totalMips = node.getHost().getTotalMips();
+//            double freeMips = totalMips - currentMips;
+//
+//            // 跳过那些已经彻底满载的低配节点，减少噪声
+//            if (freeMips < 100 && !node.getName().contains("cloud")) continue;
+//
+//            String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
+//            sb.append(String.format("- ID %d (%s): Total %.0f MIPS, Free %.0f.\n",
+//                    node.getId(), type, totalMips, freeMips));
+//            count++;
+//        }
+//        return sb.toString();
+//    }
+    // [增强版] 生成环境快照 (Prompt) - 补充 RAM 和 链路信息
     private String generateEnvironmentDescription(QueuedModule curr) {
         StringBuilder sb = new StringBuilder();
+
+        // 1. 任务基本需求
         sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
                 curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
-        sb.append("Nodes Status (Top 15 relevant):\n");
 
+        // 2. 链路上下文：告诉 LLM 前置服务在哪里
+        String predecessorLoc = "Unknown";
+        Application app = applicationInfo.get(curr.appId);
+        if (app != null) {
+            for (AppEdge edge : app.getEdges()) {
+                // 找到指向当前模块的边 (Upstream)
+                if (edge.getDestination().equals(curr.moduleName) && edge.getDirection() == Tuple.UP) {
+                    String sourceName = edge.getSource();
+                    String sourceKey = curr.appId + "_" + sourceName;
+
+                    // 处理特殊的源名称
+                    if (sourceName.equals("client")) sourceKey = curr.appId + "_client";
+                    else if (sourceName.startsWith("s-")) sourceKey = sourceName; // sensor
+
+                    if (currentPlacementMap.containsKey(sourceKey)) {
+                        int prevNodeId = currentPlacementMap.get(sourceKey);
+                        predecessorLoc = String.format("Node %d", prevNodeId);
+                    } else {
+                        predecessorLoc = "Not Placed Yet / Sensor";
+                    }
+                    break;
+                }
+            }
+        }
+        sb.append(String.format("Data Source (Predecessor) is located at: %s.\n", predecessorLoc));
+
+        // 3. 节点状态列表
+        sb.append("Nodes Status (Top 15 relevant):\n");
         int count = 0;
         for (FogDevice node : deployableNodes) {
-            // 简单筛选：只展示 Cloud 和有一定空闲的 Edge，防止Prompt太长
             if (count > 15) break;
 
+            // CPU 信息
             double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
             double totalMips = node.getHost().getTotalMips();
             double freeMips = totalMips - currentMips;
 
-            // 跳过那些已经彻底满载的低配节点，减少噪声
+            // [新增] RAM 信息
+            int totalRam = node.getHost().getRam();
+            int usedRam = currentRamLoad.getOrDefault(node.getId(), 0);
+            int freeRam = totalRam - usedRam;
+
+            // 过滤掉几乎不可用的节点，减少 Prompt 长度
             if (freeMips < 100 && !node.getName().contains("cloud")) continue;
 
             String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
-            sb.append(String.format("- ID %d (%s): Total %.0f MIPS, Free %.0f.\n",
-                    node.getId(), type, totalMips, freeMips));
+
+            // [优化] 输出格式包含 RAM
+            sb.append(String.format("- ID %d (%s): Free CPU %.0f/%.0f, Free RAM %d/%d.\n",
+                    node.getId(), type, freeMips, totalMips, freeRam, totalRam));
             count++;
         }
         return sb.toString();
     }
 
-    // [修改] 增加 isPreDecision 参数
-    private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {
-        List<Double> state = new ArrayList<>();
-        List<Boolean> mask = new ArrayList<>();
+//    // [修改] 增加 isPreDecision 参数
+//    private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {
+//        List<Double> state = new ArrayList<>();
+//        List<Boolean> mask = new ArrayList<>();
+//
+//        for (int i = 0; i < MAX_NODES; i++) {
+//            if (i < deployableNodes.size()) {
+//                FogDevice dev = deployableNodes.get(i);
+//                double total = dev.getHost().getTotalMips();
+//                double used = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
+//
+//                state.add((total - used) / total);
+//                state.add(total / 5000.0);
+//                state.add(dev.getHost().getRam() / 8192.0);
+//                state.add(dev.getLevel() / 2.0);
+//
+//                mask.add(true);
+//            } else {
+//                state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
+//                mask.add(false);
+//            }
+//        }
+//
+//        if (currentModuleIndex < placementQueue.size()) {
+//            QueuedModule qm = placementQueue.get(currentModuleIndex);
+//            state.add(qm.moduleObj.getMips() / 5000.0);
+//            state.add(qm.moduleObj.getRam() / 4096.0);
+//        } else {
+//            state.add(0.0); state.add(0.0);
+//        }
+//
+//        // [关键] 决定返回给 Python 的 description
+//        String finalDesc = "";
+//        if (isPreDecision && currentModuleIndex < placementQueue.size()) {
+//            // 决策前：生成环境快照
+//            finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
+//        } else {
+//            // 决策后：返回日志，或者为了下一个 Step 预生成下一个环境描述
+//            // 注意：Step 返回的 Info 包含的是 Next State 的描述
+//            if (currentModuleIndex < placementQueue.size()) {
+//                finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
+//            } else {
+//                finalDesc = "Episode Finished";
+//            }
+//        }
+//
+//        return new StateRepresentation(state, mask, finalDesc);
+//    }
 
-        for (int i = 0; i < MAX_NODES; i++) {
-            if (i < deployableNodes.size()) {
-                FogDevice dev = deployableNodes.get(i);
-                double total = dev.getHost().getTotalMips();
-                double used = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
 
-                state.add((total - used) / total);
-                state.add(total / 5000.0);
-                state.add(dev.getHost().getRam() / 8192.0);
-                state.add(dev.getLevel() / 2.0);
+    //使用mask的方案
+//private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {
+//    List<Double> state = new ArrayList<>();
+//    List<Boolean> mask = new ArrayList<>();
+//
+//    // 1. 获取当前等待部署的任务（如果有）
+//    QueuedModule currentTask = null;
+//    if (currentModuleIndex < placementQueue.size()) {
+//        currentTask = placementQueue.get(currentModuleIndex);
+//    }
+//
+//    for (int i = 0; i < MAX_NODES; i++) {
+//        if (i < deployableNodes.size()) {
+//            FogDevice dev = deployableNodes.get(i);
+//
+//            // --- 获取资源信息 ---
+//            double totalMips = dev.getHost().getTotalMips();
+//            double usedMips = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
+//            double freeMips = totalMips - usedMips;
+//
+//            int totalRam = dev.getHost().getRam();
+//            int usedRam = currentRamLoad.getOrDefault(dev.getId(), 0);
+//            int freeRam = totalRam - usedRam;
+//
+//            // --- 构建状态向量 (State) ---
+//            // 使用 Math.min 稍微限制一下归一化数值，防止 Cloud 数值过大主导梯度
+//            state.add(Math.min(freeMips / totalMips, 1.0)); // 剩余 CPU 比例
+//            state.add(Math.min(totalMips / 5000.0, 5.0));   // 绝对 CPU 能力 (限制上限)
+//            state.add(Math.min(totalRam / 8192.0, 2.0));    // RAM 能力
+//            state.add(dev.getLevel() / 2.0);                // 层级归一化
+//
+//            // ---构建掩码 (Mask) ---
+//            boolean isDeployable = true;
+//
+//            if (currentTask != null) {
+//                double reqMips = currentTask.moduleObj.getMips();
+//                int reqRam = currentTask.moduleObj.getRam();
+//                // 核心逻辑：只有 CPU 和 RAM 都足够时，Mask 才为 true
+//                // 如果资源不足，Mask 为 false，Agent 就根本无法选择这个节点
+//                if (freeMips < reqMips || freeRam < reqRam) {
+//                    isDeployable = false;
+//                }
+//            }
+//            // 防止所有节点都满了导致死锁 (虽然 Cloud 很难满)
+//            if (dev.getName().toLowerCase().contains("cloud") && freeMips > 100) {
+//                isDeployable = true;
+//            }
+//
+//            mask.add(isDeployable);
+//
+//        } else {
+//            // Padding 部分，Mask 必须为 false
+//            state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
+//            mask.add(false);
+//        }
+//    }
+//
+//    // 添加任务本身的特征
+//    if (currentModuleIndex < placementQueue.size()) {
+//        QueuedModule qm = placementQueue.get(currentModuleIndex);
+//        state.add(qm.moduleObj.getMips() / 5000.0);
+//        state.add(qm.moduleObj.getRam() / 4096.0);
+//    } else {
+//        state.add(0.0); state.add(0.0);
+//    }
+//
+//    // 生成 LLM 描述
+//    String finalDesc = "";
+//    if (isPreDecision && currentModuleIndex < placementQueue.size()) {
+//        finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
+//    } else {
+//        if (currentModuleIndex < placementQueue.size()) {
+//            finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
+//        } else {
+//            finalDesc = "Episode Finished";
+//        }
+//    }
+//
+//    return new StateRepresentation(state, mask, finalDesc);
+//}
 
-                mask.add(true);
-            } else {
-                state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
-                mask.add(false);
-            }
-        }
 
-        if (currentModuleIndex < placementQueue.size()) {
-            QueuedModule qm = placementQueue.get(currentModuleIndex);
-            state.add(qm.moduleObj.getMips() / 5000.0);
-            state.add(qm.moduleObj.getRam() / 4096.0);
+
+//去掉mask的方案
+private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {
+    List<Double> state = new ArrayList<>();
+    List<Boolean> mask = new ArrayList<>();
+
+    // 1. 获取当前等待部署的任务信息
+    QueuedModule currentTask = null;
+    double reqMips = 0;
+    int reqRam = 0;
+    if (currentModuleIndex < placementQueue.size()) {
+        currentTask = placementQueue.get(currentModuleIndex);
+        reqMips = currentTask.moduleObj.getMips();
+        reqRam = currentTask.moduleObj.getRam();
+    }
+
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (i < deployableNodes.size()) {
+            FogDevice dev = deployableNodes.get(i);
+
+            // --- 获取资源数据 ---
+            double totalMips = dev.getHost().getTotalMips();
+            double usedMips = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
+            double freeMips = totalMips - usedMips;
+
+            int totalRam = dev.getHost().getRam();
+            int usedRam = currentRamLoad.getOrDefault(dev.getId(), 0);
+            int freeRam = totalRam - usedRam;
+            // 特征 1: 剩余资源比例 (原有)
+            state.add(Math.min(freeMips / totalMips, 1.0));
+            // 特征 2: CPU 余量 (Margin)
+            // 公式: (剩余 - 需求) / 归一化因子
+            // 逻辑: 正数代表够用，负数代表不够。RL 对正负号非常敏感，一学就会。
+            state.add((freeMips - reqMips) / 5000.0);
+
+            // 特征 3:  RAM 余量 (Margin)
+            state.add((freeRam - reqRam) / 8192.0);
+
+            // 特征 4: 层级 (区分 Cloud/Edge)
+            state.add(dev.getLevel() / 2.0);
+
+            // --- 撤销 Mask，让 RL 自己判断 ---
+            // 始终为 true。RL 必须学会：如果特征2或特征3是负数，选了就会死(-100)。
+            mask.add(true);
+
         } else {
-            state.add(0.0); state.add(0.0);
+            // Padding 部分
+            state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
+            mask.add(false);
         }
+    }
 
-        // [关键] 决定返回给 Python 的 description
-        String finalDesc = "";
-        if (isPreDecision && currentModuleIndex < placementQueue.size()) {
-            // 决策前：生成环境快照
+    // 任务特征 (保留)
+    if (currentTask != null) {
+        state.add(reqMips / 5000.0);
+        state.add(reqRam / 4096.0);
+    } else {
+        state.add(0.0); state.add(0.0);
+    }
+
+    // 生成 LLM 描述
+    String finalDesc = "";
+    if (isPreDecision && currentModuleIndex < placementQueue.size()) {
+        finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
+    } else {
+        if (currentModuleIndex < placementQueue.size()) {
             finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
         } else {
-            // 决策后：返回日志，或者为了下一个 Step 预生成下一个环境描述
-            // 注意：Step 返回的 Info 包含的是 Next State 的描述
-            if (currentModuleIndex < placementQueue.size()) {
-                finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
-            } else {
-                finalDesc = "Episode Finished";
-            }
+            finalDesc = "Episode Finished";
         }
-
-        return new StateRepresentation(state, mask, finalDesc);
     }
+
+    return new StateRepresentation(state, mask, finalDesc);
+}
 
     private PlacementLogicOutput generateFinalOutput() {
         Map<Integer, Map<Application, List<ModuleLaunchConfig>>> perDevice = new HashMap<>();

@@ -17,29 +17,22 @@ from config import (MAX_EPISODES, BATCH_SIZE, MODEL_SAVE_FREQ,
 class ExperimentManager:
     """管理实验路径和文件保存"""
     def __init__(self, base_dir="D:/Code/MD_DATA/experiments"):
-        # 生成时间戳文件夹名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.exp_dir = os.path.join(base_dir, timestamp)
-        
-        # 创建文件夹
         if not os.path.exists(self.exp_dir):
             os.makedirs(self.exp_dir)
-        
         print(f"=== Experiment Output Directory: {self.exp_dir} ===")
-
-        # 定义各文件的完整路径
         self.log_file = os.path.join(self.exp_dir, 'rl_training_log.csv')
         self.dataset_file = os.path.join(self.exp_dir, 'llm_finetuning_data.jsonl')
         self.model_file = os.path.join(self.exp_dir, 'dueling_dqn_model.pdparams')
         self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
     def save_llm_data(self, description, action, reward):
-        """保存高质量的 (Instruction, Input, Output) 三元组"""
-        # [修改] 阈值设为 35 (边缘部署的平均得分线)
-        if reward > 35.0 and description:
+        # [调整] 阈值设为 30 (只要是正收益，大概率就是选对了边缘，且没有被延迟扣太狠)
+        if reward > 30.0 and description:
             entry = {
                 "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with sufficient resources to minimize latency.",
-                "input": description, # 这是决策前的环境快照
+                "input": description,
                 "output": str(action),
                 "reward": round(reward, 2)
             }
@@ -95,22 +88,8 @@ def train_agent():
 
     try:
         for episode in range(1, MAX_EPISODES + 1):
-            # 1. 重置环境，获取初始状态和初始描述
             state, mask, info = env.reset()
-            current_desc = info.get('description', "") # [关键] 缓存当前描述
-            
-            # --- 动态环境模拟 ---
-            if episode < MAX_EPISODES: 
-                valid_indices = np.where(mask)[0]
-                candidates = valid_indices[2:]
-                if len(candidates) > 5:
-                    num_drop = np.random.randint(0, 6)
-                    if num_drop > 0:
-                        drop_indices = np.random.choice(candidates, num_drop, replace=False)
-                        mask[drop_indices] = False
-                        for idx in drop_indices:
-                            state[idx*4:(idx+1)*4] = 0.0
-            # -------------------
+            current_desc = info.get('description', "") 
             
             if state is None or mask is None:
                 print(f"Episode {episode}: Failed reset. Stopping.")
@@ -124,52 +103,72 @@ def train_agent():
 
             while True:
                 step += 1
-                
+                # 如果所有节点都不可用（Mask 全 False），通常意味着结束或者异常
                 if not np.any(mask):
                     final_reward = env.get_final_reward()
                     if len(agent.memory) > 0:
                         agent.memory.update_last_reward(final_reward)
                     total_reward += final_reward
                     break
-
-                if episode < START_TRAIN_EPISODE:
+                # Expert Guidance 配合 Java Valid Mask
+                forced_action = -1
+                
+                # 引导期：前 5000 轮 (可根据总 Episode 数调整，例如总数的 10-20%)
+                is_warmup = episode < 5000
+                
+                if is_warmup and np.random.rand() < 0.7:
+                    # 1. np.where(mask)[0] 返回所有 Mask=True 的索引
+                    valid_indices = np.where(mask)[0]
+                    
+                    # 2. 筛选 Edge Nodes。根据拓扑：0=Cloud, 1-4=Gateway, 5+=Edge
+                    # 这一步确保只引导去那些“资源足够”的边缘节点
+                    valid_edge_indices = [i for i in valid_indices if i >= 5]
+                    
+                    # 3. 如果有合法的边缘节点，随机选一个；否则不强制
+                    if len(valid_edge_indices) > 0:
+                        forced_action = np.random.choice(valid_edge_indices)
+                
+                # --- 动作选择逻辑 ---
+                if forced_action != -1:
+                    action = forced_action # 执行引导动作
+                elif episode < START_TRAIN_EPISODE:
+                    # 随机填充 Buffer (仅在有效 Mask 中选)
                     valid_actions = np.where(mask)[0]
                     action = np.random.choice(valid_actions) if valid_actions.size > 0 else 0
                 else:
+                    # 正常的 RL 策略 (Epsilon-Greedy + Q-Value Hard Masking)
                     action = agent.select_action(state, mask, explore=True)
 
-                # 2. 执行动作
+                # 执行动作
                 next_state, next_mask, reward, done, next_info = env.step(action)
 
                 if next_state is None or next_mask is None:
                     break
-
-                # 3. 存储经验
+                # 存储经验
                 agent.remember(state, action, reward, next_state, done, mask, next_mask)
                 
-                # 记录 Q 值
+                # 记录 Q 值 (用于绘图监控收敛情况)
                 q_value = agent.get_q_value(state, action)
                 episode_q_values.append(q_value)
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
 
-                # 4. [关键] 保存微调数据
-                # 使用 current_desc (决策前的环境) 和 当前的 action/reward
+                # 保存微调数据 (仅保存高质量样本)
                 if episode >= START_TRAIN_EPISODE and current_desc:
                     exp_manager.save_llm_data(current_desc, action, reward)
 
                 if done:
+                    # 如果 Episode 正常结束，获取最终奖励（如果有）
                     if np.any(mask): 
                         final_reward = env.get_final_reward()
                         total_reward += final_reward
                         agent.memory.update_last_reward(final_reward)
                     break
 
-                # 5. 状态流转
+                # 状态流转
                 state = next_state
                 mask = next_mask
-                # 更新描述，用于下一步的记录
                 current_desc = next_info.get('description', "") 
 
                 # 训练网络
@@ -178,10 +177,11 @@ def train_agent():
                     if loss_val is not None:
                         episode_losses.append(loss_val)
                 
+                # 防止死循环的兜底
                 if step > (ACTION_DIM * 5): 
                     break
 
-            # ... (后续处理逻辑不变)
+            # Episode 结束后的处理
             agent.decay_epsilon()
             agent.update_target_network_episode(episode)
             

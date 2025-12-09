@@ -55,16 +55,27 @@ public class MicroservicePlacement {
     private static int edgeNodeIndex = 0;
     static boolean heterogeneousEdgeNodes = true;
 
-    // 包含低配(1800)、中配(2800-3200)、高配(3800-4200)
-    static Integer[] edgeNodeCpus = new Integer[]{1800, 3600, 4000, 2200, 3500, 3800, 4500, 2000, 3600, 3800};
-    static Integer[] edgeNodeRam = new Integer[]{2048, 4096, 8192, 2048, 4096, 4096, 8192, 2048, 4096, 8192};
+    static Integer[] edgeNodeCpus = new Integer[]{
+            4800, 5000, 5200, 4800, 5500,
+            6000, 5000, 4800, 5200, 5500
+    };
+
+    // RAM 也相应给足，避免内存成为瓶颈干扰 CPU 调度的实验结论
+    static Integer[] edgeNodeRam = new Integer[]{
+            4096, 8192, 4096, 4096, 8192,
+            8192, 8192, 4096, 8192, 4096
+    };
 
     // 高性能 = 高能耗，迫使 RL 学会权衡
     static Double[] edgeNodeBusyPower = new Double[]{
-            80.0,  110.0, 250.0, 85.0,  120.0, 130.0, 280.0, 60.0,  115.0, 240.0
+            220.0, 230.0, 240.0, 220.0, 250.0,
+            280.0, 230.0, 220.0, 240.0, 250.0
     };
+
+    // 待机功耗 (通常是满载的 50%-60%)
     static Double[] edgeNodeIdlePower = new Double[]{
-            50.0,  80.0,  180.0, 55.0,  85.0,  90.0,  200.0, 40.0,  82.0,  170.0
+            110.0, 115.0, 120.0, 110.0, 125.0,
+            140.0, 115.0, 110.0, 120.0, 125.0
     };
 
     static Integer deviceNum = 0;
@@ -219,7 +230,7 @@ public class MicroservicePlacement {
         fogDevices.add(cloud);
 
         for (int i = 0; i < edgeGateways; i++) {
-            FogDevice gateway = createFogDeviceHelper("gateway-" + i, 20000, 8000, 10000, 10000, 1, 0.0, 107, 83, MicroserviceFogDevice.FON);
+            FogDevice gateway = createFogDeviceHelper("gateway-" + i, 2800, 4000, 10000, 10000, 1, 0.0, 107, 83, MicroserviceFogDevice.FON);
             gateway.setParentId(cloud.getId());
             gateway.setUplinkLatency(edgeToCloudLatency);
             gateway.setLevel(1);

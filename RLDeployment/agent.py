@@ -95,31 +95,31 @@ class DuelingDQNAgent:
         self.memory.store((state, action, reward, next_state, done, mask, next_mask))
 
     def select_action(self, state, mask, explore=True):
-        if not isinstance(mask, np.ndarray) or mask.ndim != 1 or mask.shape[0] != self.action_dim:
-             return 0
-
-        valid_actions = np.where(mask)[0]
-        if not valid_actions.size:
-            return 0 
-
+        # 1. 探索阶段 (Epsilon-Greedy)
         if explore and np.random.rand() <= self.epsilon:
-            return np.random.choice(valid_actions)
-        else:
-            state_tensor = paddle.to_tensor(state[np.newaxis, :], dtype='float32')
-            self.main_network.eval() 
-            with paddle.no_grad():
-                q_values = self.main_network(state_tensor)[0] 
-            self.main_network.train() 
+            # 即使是随机探索，也只在 Mask 为 True 的有效动作里选
+            valid_actions = np.where(mask)[0]
+            if valid_actions.size > 0:
+                return np.random.choice(valid_actions)
+            return 0 # 保底
 
-            mask_tensor = paddle.to_tensor(mask, dtype='bool')
-            masked_q_values = paddle.where(mask_tensor, q_values, paddle.full_like(q_values, -float('inf')))
+        # 2. 利用阶段 (Argmax Q with Hard Masking)
+        state_tensor = paddle.to_tensor(state[np.newaxis, :], dtype='float32')
+        self.main_network.eval() 
+        with paddle.no_grad():
+            q_values = self.main_network(state_tensor)[0] 
+        self.main_network.train() 
 
-            best_action = paddle.argmax(masked_q_values).item()
+        # [核心修改] 硬约束 Action Masking
+        # 将 Mask 为 False 的位置 Q 值设为 -1e9 (负无穷)，确保 Argmax 绝不选中
+        mask_tensor = paddle.to_tensor(mask, dtype='bool')
+        inf_mask = paddle.full_like(q_values, -1e9) 
+        
+        # 如果 mask 为 True，保留原 Q 值；如果为 False，替换为 -1e9
+        masked_q_values = paddle.where(mask_tensor, q_values, inf_mask)
 
-            if not mask[best_action]:
-                 return np.random.choice(valid_actions)
-
-            return best_action
+        best_action = paddle.argmax(masked_q_values).item()
+        return best_action
 
     def train(self):
         """采样批次并训练主网络，返回当前的 loss 值"""
@@ -135,16 +135,19 @@ class DuelingDQNAgent:
         rewards = paddle.to_tensor(rewards_np, dtype='float32')
         next_states = paddle.to_tensor(next_states_np, dtype='float32')
         dones = paddle.to_tensor(dones_np, dtype='bool')
-        # masks = paddle.to_tensor(masks_np, dtype='bool') # 当前状态 mask 暂时用不到
         next_masks = paddle.to_tensor(next_masks_np, dtype='bool')
 
-        # --- [漏洞修复] Double DQN 逻辑 ---
+        # --- Double DQN 逻辑 ---
         # 1. 使用 主网络 选择最佳动作 (Selection)
         self.main_network.eval()
         with paddle.no_grad():
             next_q_values_main = self.main_network(next_states)
-            # 应用掩码防止选择非法动作
-            next_q_values_main[~next_masks] = -float('inf')
+            
+            # [训练时的 Hard Masking]
+            # 对 Next State 的 Q 值也应用 Mask，防止 Target 计算错误
+            next_inf_mask = paddle.full_like(next_q_values_main, -1e9)
+            next_q_values_main = paddle.where(next_masks, next_q_values_main, next_inf_mask)
+            
             best_next_actions = paddle.argmax(next_q_values_main, axis=1, dtype='int64')
         self.main_network.train()
 
