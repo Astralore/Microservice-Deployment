@@ -29,7 +29,7 @@ class ExperimentManager:
 
     def save_llm_data(self, description, action, reward):
         # [调整] 阈值设为 30 (只要是正收益，大概率就是选对了边缘，且没有被延迟扣太狠)
-        if reward > 30.0 and description:
+        if reward > 35.0 and description:
             entry = {
                 "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with sufficient resources to minimize latency.",
                 "input": description,
@@ -110,35 +110,35 @@ def train_agent():
                         agent.memory.update_last_reward(final_reward)
                     total_reward += final_reward
                     break
-                # Expert Guidance 配合 Java Valid Mask
                 forced_action = -1
-                
-                # 引导期：前 5000 轮 (可根据总 Episode 数调整，例如总数的 10-20%)
                 is_warmup = episode < 5000
-                
+                # 不仅要选边缘，还要偷看 State，确保选的是"活着"的边缘
                 if is_warmup and np.random.rand() < 0.7:
-                    # 1. np.where(mask)[0] 返回所有 Mask=True 的索引
-                    valid_indices = np.where(mask)[0]
+                    valid_edge_candidates = []
+                    # 遍历所有 Edge 节点 (ID 5 到 49)
+                    # 假设 MAX_DEPLOYABLE_NODES = 50
+                    for node_id in range(5, ACTION_DIM):
+                        # State 结构：每个节点 4 个特征
+                        # Index 0: Ratio, Index 1: CPU Margin, Index 2: RAM Margin, Index 3: Level
+                        # 要找 CPU Margin (Index 1) > 0 的节点
+                        cpu_margin_idx = node_id * 4 + 1
+                        
+                        if cpu_margin_idx < len(state):
+                            margin = state[cpu_margin_idx]
+                            if margin > 0: # 资源充足！
+                                valid_edge_candidates.append(node_id)
                     
-                    # 2. 筛选 Edge Nodes。根据拓扑：0=Cloud, 1-4=Gateway, 5+=Edge
-                    # 这一步确保只引导去那些“资源足够”的边缘节点
-                    valid_edge_indices = [i for i in valid_indices if i >= 5]
-                    
-                    # 3. 如果有合法的边缘节点，随机选一个；否则不强制
-                    if len(valid_edge_indices) > 0:
-                        forced_action = np.random.choice(valid_edge_indices)
-                
-                # --- 动作选择逻辑 ---
+                    # 如果有“活”的边缘节点，从中随机选一个
+                    if len(valid_edge_candidates) > 0:
+                        forced_action = np.random.choice(valid_edge_candidates)
+                    # 如果所有边缘都死了，那就不强制了，让 RL 自己去选（或者去云端）
                 if forced_action != -1:
-                    action = forced_action # 执行引导动作
+                    action = forced_action
                 elif episode < START_TRAIN_EPISODE:
-                    # 随机填充 Buffer (仅在有效 Mask 中选)
                     valid_actions = np.where(mask)[0]
                     action = np.random.choice(valid_actions) if valid_actions.size > 0 else 0
                 else:
-                    # 正常的 RL 策略 (Epsilon-Greedy + Q-Value Hard Masking)
                     action = agent.select_action(state, mask, explore=True)
-
                 # 执行动作
                 next_state, next_mask, reward, done, next_info = env.step(action)
 

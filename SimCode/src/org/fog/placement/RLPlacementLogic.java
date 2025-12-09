@@ -97,6 +97,18 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         System.out.println("Deployable Nodes: " + deployableNodes.size());
         System.out.println("Waiting for Python Agent...");
 
+        System.out.println("\n=== Node Mapping (Action Index -> Node ID) ===");
+        for (int i = 0; i < deployableNodes.size(); i++) {
+            FogDevice dev = deployableNodes.get(i);
+            String type = "EDGE";
+            if (dev.getLevel() == 0) type = "CLOUD";
+            else if (dev.getLevel() == 1) type = "GATEWAY";
+
+            System.out.printf("Action %d -> ID %d (%s) | MIPS: %.0f\n",
+                    i, dev.getId(), type, dev.getHost().getTotalMips());
+        }
+        System.out.println("==============================================\n");
+
         startRestApiServerOnce();
 
         synchronized(this) {
@@ -523,14 +535,11 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
             // 特征 2: CPU 余量 (Margin)
             // 公式: (剩余 - 需求) / 归一化因子
             // 逻辑: 正数代表够用，负数代表不够。RL 对正负号非常敏感，一学就会。
-            state.add((freeMips - reqMips) / 5000.0);
-
+            state.add((freeMips - reqMips) / totalMips);
             // 特征 3:  RAM 余量 (Margin)
-            state.add((freeRam - reqRam) / 8192.0);
-
+            state.add((freeRam - reqRam) /(double) totalRam);
             // 特征 4: 层级 (区分 Cloud/Edge)
             state.add(dev.getLevel() / 2.0);
-
             // --- 撤销 Mask，让 RL 自己判断 ---
             // 始终为 true。RL 必须学会：如果特征2或特征3是负数，选了就会死(-100)。
             mask.add(true);
