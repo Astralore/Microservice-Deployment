@@ -28,7 +28,7 @@ class ExperimentManager:
         self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
     def save_llm_data(self, description, action, reward):
-        # [调整] 阈值设为 30 (只要是正收益，大概率就是选对了边缘，且没有被延迟扣太狠)
+        # 阈值保持 30 或 35 均可，这里用 30 保证收集足够数据
         if reward > 35.0 and description:
             entry = {
                 "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with sufficient resources to minimize latency.",
@@ -103,70 +103,122 @@ def train_agent():
 
             while True:
                 step += 1
-                # 如果所有节点都不可用（Mask 全 False），通常意味着结束或者异常
+                
+                # 如果所有节点都不可用
                 if not np.any(mask):
                     final_reward = env.get_final_reward()
                     if len(agent.memory) > 0:
                         agent.memory.update_last_reward(final_reward)
                     total_reward += final_reward
                     break
+                
+                        # # [插入这段 Debug 代码] ==================================
+                        # if step == 1 and episode % 50 == 0 and node_id == 5:
+                        #     print(f"\n>>> [PYTHON DEBUG Node 5] <<<")
+                        #     # 打印这一段 State 的原始 4 个数值
+                        #     raw_slice = state[base_idx : base_idx+4]
+                        #     print(f"Raw Slice (Indices {base_idx}-{base_idx+3}): {raw_slice}")
+                            
+                        #     # 打印我们认为的变量
+                        #     print(f"Read CPU_SAFE (Idx {base_idx+0}): {state[base_idx+0]}")
+                        #     print(f"Read RAM_SAFE (Idx {base_idx+1}): {state[base_idx+1]}")
+                        #     print(f"Read LEVEL    (Idx {base_idx+3}): {state[base_idx+3]}")
+                        #     print("===============================\n")
+                        # # ======================================================
+                expert_decay_steps = 10000
+                expert_prob = max(0.0, 1.0 - (episode / expert_decay_steps))
+                
                 forced_action = -1
-                is_warmup = episode < 5000
-                # 不仅要选边缘，还要偷看 State，确保选的是"活着"的边缘
-                if is_warmup and np.random.rand() < 0.7:
+                
+                # 掷骰子决定这一步是否由专家代打
+                use_expert = np.random.rand() < expert_prob
+
+                if use_expert:
                     valid_edge_candidates = []
-                    # 遍历所有 Edge 节点 (ID 5 到 49)
-                    # 假设 MAX_DEPLOYABLE_NODES = 50
-                    for node_id in range(5, ACTION_DIM):
-                        # State 结构：每个节点 4 个特征
-                        # Index 0: Ratio, Index 1: CPU Margin, Index 2: RAM Margin, Index 3: Level
-                        # 要找 CPU Margin (Index 1) > 0 的节点
-                        cpu_margin_idx = node_id * 4 + 1
-                        
-                        if cpu_margin_idx < len(state):
-                            margin = state[cpu_margin_idx]
-                            if margin > 0: # 资源充足！
-                                valid_edge_candidates.append(node_id)
+                    valid_cloud_candidates = [] 
                     
-                    # 如果有“活”的边缘节点，从中随机选一个
+                    debug_logs = [] 
+                    
+                    # --- 专家逻辑 ---
+                    for node_id in range(ACTION_DIM):
+                        if not mask[node_id]: continue
+                        base_idx = node_id * 4
+                        if base_idx + 3 >= len(state): break
+                        
+                        cpu_safe_flag = state[base_idx + 0] 
+                        ram_safe_flag = state[base_idx + 1] 
+                        level         = state[base_idx + 3]
+                        
+                        is_resource_enough = (cpu_safe_flag > 0) and (ram_safe_flag > 0)
+
+                        if is_resource_enough:
+                            if level > 0.9: # Edge
+                                valid_edge_candidates.append(node_id)
+                                # [修复 2] 记录日志数据
+                                if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                    debug_logs.append(f"E{node_id}")
+                            elif level < 0.1: # Cloud
+                                valid_cloud_candidates.append(node_id)
+                        else:
+                             # [修复 3] 记录满载原因
+                             if level > 0.9 and step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                    debug_logs.append(f"E{node_id}(Full)")
+
+                    # [调试打印] 
+                    if step == 1 and episode % 50 == 0:
+                        print(f"\n[Expert Debug Ep{episode}] Edges: {len(valid_edge_candidates)} | Clouds: {len(valid_cloud_candidates)}")
+                        # 现在这里不会报错了
+                        print(f"Sample Nodes: {', '.join(debug_logs)}")
+
+                    # [决策逻辑]
                     if len(valid_edge_candidates) > 0:
                         forced_action = np.random.choice(valid_edge_candidates)
-                    # 如果所有边缘都死了，那就不强制了，让 RL 自己去选（或者去云端）
+                    elif len(valid_cloud_candidates) > 0:
+                        forced_action = np.random.choice(valid_cloud_candidates)
+                        # 如果边缘全满，不得不去云端，打印一条警告
+                        if step == 1 and episode % 50 == 0:
+                            print("Expert Advice: All edges FULL, fallback to CLOUD.")
+                
+                # --- 动作选择与执行 ---
                 if forced_action != -1:
                     action = forced_action
                 elif episode < START_TRAIN_EPISODE:
-                    valid_actions = np.where(mask)[0]
-                    action = np.random.choice(valid_actions) if valid_actions.size > 0 else 0
+                    # 随机填充时，也要遵守 Mask，且尽量避开 Padding
+                    valid_indices = np.where(mask)[0]
+                    if len(valid_indices) > 0:
+                        action = np.random.choice(valid_indices)
+                    else:
+                        action = 0 # 兜底 Cloud
                 else:
+                    # 正常的 RL 策略 (Epsilon-Greedy)
                     action = agent.select_action(state, mask, explore=True)
                 # 执行动作
                 next_state, next_mask, reward, done, next_info = env.step(action)
 
                 if next_state is None or next_mask is None:
                     break
+
                 # 存储经验
                 agent.remember(state, action, reward, next_state, done, mask, next_mask)
                 
-                # 记录 Q 值 (用于绘图监控收敛情况)
+                # 记录 Q 值
                 q_value = agent.get_q_value(state, action)
                 episode_q_values.append(q_value)
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
 
-                # 保存微调数据 (仅保存高质量样本)
+                # 保存微调数据
                 if episode >= START_TRAIN_EPISODE and current_desc:
                     exp_manager.save_llm_data(current_desc, action, reward)
 
                 if done:
-                    # 如果 Episode 正常结束，获取最终奖励（如果有）
                     if np.any(mask): 
                         final_reward = env.get_final_reward()
                         total_reward += final_reward
                         agent.memory.update_last_reward(final_reward)
                     break
 
-                # 状态流转
                 state = next_state
                 mask = next_mask
                 current_desc = next_info.get('description', "") 
@@ -177,11 +229,9 @@ def train_agent():
                     if loss_val is not None:
                         episode_losses.append(loss_val)
                 
-                # 防止死循环的兜底
                 if step > (ACTION_DIM * 5): 
                     break
 
-            # Episode 结束后的处理
             agent.decay_epsilon()
             agent.update_target_network_episode(episode)
             

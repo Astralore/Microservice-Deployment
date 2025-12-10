@@ -103,7 +103,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 2. 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice-Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
@@ -191,9 +191,11 @@ public class MicroservicePlacement {
     private static Application createApplication(String appId, int userId, Map<String, Object> params) {
         Application application = new Application(appId, userId);
 
-        int m1Mips = ((Long) params.getOrDefault("mService1_mips", 2500L)).intValue();
-        int m2Mips = ((Long) params.getOrDefault("mService2_mips", 3500L)).intValue();
-        int m3Mips = ((Long) params.getOrDefault("mService3_mips", 2000L)).intValue();
+        int m1Mips = ((Long) params.getOrDefault("mService1_mips", 1000L)).intValue();
+        int m2Mips = ((Long) params.getOrDefault("mService2_mips", 1500L)).intValue();
+        int m3Mips = ((Long) params.getOrDefault("mService3_mips", 1000L)).intValue();
+
+        System.out.println(String.format("DEBUG: App %s Created with MIPS: m1=%d, m2=%d, m3=%d", appId, m1Mips, m2Mips, m3Mips));
 
         application.addAppModule("client", 128, 500, 100);
         application.addAppModule("mService1", 1024, m1Mips, 1000);

@@ -95,14 +95,25 @@ class DuelingDQNAgent:
         self.memory.store((state, action, reward, next_state, done, mask, next_mask))
 
     def select_action(self, state, mask, explore=True):
-        # 1. 探索阶段 (Epsilon-Greedy)
+        # # 1. 探索阶段 (Epsilon-Greedy)
+        # if explore and np.random.rand() <= self.epsilon:
+        #     # 即使是随机探索，也只在 Mask 为 True 的有效动作里选
+        #     valid_actions = np.where(mask)[0]
+        #     if valid_actions.size > 0:
+        #         return np.random.choice(valid_actions)
+        #     return 0 # 保底
         if explore and np.random.rand() <= self.epsilon:
-            # 即使是随机探索，也只在 Mask 为 True 的有效动作里选
             valid_actions = np.where(mask)[0]
             if valid_actions.size > 0:
+                # [新增策略]：在随机探索时，如果有边缘节点可选，优先随机选边缘
+                # 假设边缘节点 ID >= 5 (Cloud=0, Gateway=1-4)
+                edge_actions = [a for a in valid_actions if a >= 5]
+                # 80% 的概率在边缘里随机选，20% 的概率全域随机
+                if len(edge_actions) > 0 and np.random.rand() < 0.8:
+                    return np.random.choice(edge_actions)
+                
                 return np.random.choice(valid_actions)
-            return 0 # 保底
-
+            return 0
         # 2. 利用阶段 (Argmax Q with Hard Masking)
         state_tensor = paddle.to_tensor(state[np.newaxis, :], dtype='float32')
         self.main_network.eval() 

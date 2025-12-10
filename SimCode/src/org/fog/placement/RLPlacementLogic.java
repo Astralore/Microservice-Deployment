@@ -104,8 +104,13 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             if (dev.getLevel() == 0) type = "CLOUD";
             else if (dev.getLevel() == 1) type = "GATEWAY";
 
-            System.out.printf("Action %d -> ID %d (%s) | MIPS: %.0f\n",
-                    i, dev.getId(), type, dev.getHost().getTotalMips());
+            // 使用 %d 来打印整数 (RAM)，这是我们当前最需要确认的信息
+            System.out.printf("Action %d -> ID %d (%s) | MIPS: %d | RAM: %d\n",
+                    i,
+                    dev.getId(),
+                    type,
+                    (int) dev.getHost().getTotalMips(),
+                    dev.getHost().getRam());
         }
         System.out.println("==============================================\n");
 
@@ -134,8 +139,8 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             } else if (dev.getName().toLowerCase().contains("gateway")) {
                 loadFactor = 0.1 + rand.nextDouble() * 0.2;
             } else {
-                // [微调] 仅修改这一行：边缘节点 0% - 25% 随机负载
-                loadFactor = rand.nextDouble() * 0.25;
+                // 边缘节点 0% - 25% 随机负载
+                loadFactor = rand.nextDouble() * 0.30;
             }
 
             currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
@@ -208,18 +213,17 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
 
         double reward = 0.0;
         String desc;
-
         if (enoughCpu && enoughRam) {
             updateSimulatedLoad(node.getId(), curr.moduleObj);
             currentPlacementMap.put(curr.getKey(), node.getId());
 
-            double baseReward = 50.0;
+            double baseReward = 100.0;
             boolean isCloud = node.getName().toLowerCase().contains("cloud");
 
             // 时延惩罚
             double latencyPenalty = 0.0;
             if (isCloud) {
-                latencyPenalty = 70.0;
+                latencyPenalty = 95.0;
             } else {
                 latencyPenalty = 0.0;
             }
@@ -264,13 +268,13 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             System.out.println(desc);
 
         } else {
-            reward = -100.0;
+            reward = -60.0;
             desc = "Failed (Resource)";
         }
 
         currentModuleIndex++;
         boolean done = (currentModuleIndex >= placementQueue.size());
-        if (done && reward > 0) reward += 5.0;
+        if (done && reward > 0) reward += 10.0;
 
         return new ActionResult(buildStateRepresentation(desc, false), reward, done);
     }
@@ -530,18 +534,41 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
             int totalRam = dev.getHost().getRam();
             int usedRam = currentRamLoad.getOrDefault(dev.getId(), 0);
             int freeRam = totalRam - usedRam;
-            // 特征 1: 剩余资源比例 (原有)
-            state.add(Math.min(freeMips / totalMips, 1.0));
-            // 特征 2: CPU 余量 (Margin)
-            // 公式: (剩余 - 需求) / 归一化因子
-            // 逻辑: 正数代表够用，负数代表不够。RL 对正负号非常敏感，一学就会。
-            state.add((freeMips - reqMips) / totalMips);
-            // 特征 3:  RAM 余量 (Margin)
-            state.add((freeRam - reqRam) /(double) totalRam);
-            // 特征 4: 层级 (区分 Cloud/Edge)
-            state.add(dev.getLevel() / 2.0);
-            // --- 撤销 Mask，让 RL 自己判断 ---
-            // 始终为 true。RL 必须学会：如果特征2或特征3是负数，选了就会死(-100)。
+//            // 特征 1: 剩余资源比例 (原有)
+//            state.add(Math.min(freeMips / totalMips, 1.0));
+//            // 特征 2: CPU 余量 (Margin)
+//            // 公式: (剩余 - 需求) / 归一化因子
+//            // 逻辑: 正数代表够用，负数代表不够。RL 对正负号非常敏感，一学就会。
+//            state.add((freeMips - reqMips) / totalMips);
+//            // 特征 3:  RAM 余量 (Margin)
+//            state.add((freeRam - reqRam) /(double) totalRam);
+//            // 特征 4: 层级 (区分 Cloud/Edge)
+//            state.add(dev.getLevel() / 2.0);
+//            // --- 撤销 Mask，让 RL 自己判断 ---
+//            // 始终为 true。RL 必须学会：如果特征2或特征3是负数，选了就会死(-100)。
+//            mask.add(true);
+
+            // 特征 1: 资源是否充足的“红绿灯”信号 (Binary Flag)
+            // 如果够用就是 1.0，不够用就是 -1.0。
+            // 神经网络学这个比学 0.0002 容易一万倍。
+            double cpuSafe = (freeMips >= reqMips) ? 1.0 : -1.0;
+            double ramSafe = (freeRam >= reqRam) ? 1.0 : -1.0;
+//            // [插入这段 Debug 代码] =======================================
+//            if (i == 5 && currentTask != null) { // 只看 ID 为 5 的边缘节点
+//                System.out.println("\n>>> [JAVA DEBUG Node 5] <<<");
+//                System.out.printf("TotalMips: %.2f, Used: %.2f, Free: %.2f\n", totalMips, usedMips, freeMips);
+//                System.out.printf("TaskReq: %.2f\n", reqMips);
+//                System.out.printf("Calculated CPU_SAFE: %.1f\n", cpuSafe);
+//                System.out.println("===============================\n");
+//            }
+//            // ==========================================================
+
+            // 为了保留具体还有多少的细粒度信息，我们可以组合一下
+            // 格式：[CPU_Safe_Flag, RAM_Safe_Flag, CPU_Ratio, Level]
+            state.add(cpuSafe); // 特征 1: CPU 安全标识
+            state.add(ramSafe); // 特征 2: RAM 安全标识
+            state.add(Math.min(freeMips / totalMips, 1.0)); // 特征 3: 剩余比例 (辅助决策)
+            state.add(dev.getLevel() / 2.0); // 特征 4: 层级
             mask.add(true);
 
         } else {
