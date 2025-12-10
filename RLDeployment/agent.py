@@ -107,7 +107,7 @@ class DuelingDQNAgent:
             if valid_actions.size > 0:
                 # [新增策略]：在随机探索时，如果有边缘节点可选，优先随机选边缘
                 # 假设边缘节点 ID >= 5 (Cloud=0, Gateway=1-4)
-                edge_actions = [a for a in valid_actions if a >= 5]
+                edge_actions = [a for a in valid_actions if a >= 1]
                 # 80% 的概率在边缘里随机选，20% 的概率全域随机
                 if len(edge_actions) > 0 and np.random.rand() < 0.8:
                     return np.random.choice(edge_actions)

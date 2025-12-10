@@ -130,7 +130,6 @@ def train_agent():
                 
                 forced_action = -1
                 
-                # 掷骰子决定这一步是否由专家代打
                 use_expert = np.random.rand() < expert_prob
 
                 if use_expert:
@@ -154,13 +153,13 @@ def train_agent():
                         if is_resource_enough:
                             if level > 0.9: # Edge
                                 valid_edge_candidates.append(node_id)
-                                # [修复 2] 记录日志数据
+                                # 记录日志数据
                                 if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
                                     debug_logs.append(f"E{node_id}")
                             elif level < 0.1: # Cloud
                                 valid_cloud_candidates.append(node_id)
                         else:
-                             # [修复 3] 记录满载原因
+                             # 记录满载原因
                              if level > 0.9 and step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
                                     debug_logs.append(f"E{node_id}(Full)")
 

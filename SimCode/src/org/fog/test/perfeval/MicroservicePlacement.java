@@ -7,7 +7,6 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Log;
@@ -31,7 +30,6 @@ import org.fog.entities.Sensor;
 import org.fog.entities.Tuple;
 import org.fog.placement.MicroservicesController;
 import org.fog.placement.PlacementLogicFactory;
-import org.fog.placement.RLPlacementLogic;
 import org.fog.policy.AppModuleAllocationPolicy;
 import org.fog.scheduler.StreamOperatorScheduler;
 import org.fog.utils.FogLinearPowerModel;
@@ -103,7 +101,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 2. 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice-Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
