@@ -79,12 +79,18 @@ def train_agent():
     agent = DuelingDQNAgent() 
     logger = DataLogger(filename=exp_manager.log_file)
 
+    resource_monitor = ResourceMonitor()
+
     history_rewards = []
     history_losses = []
     history_q_values = []
 
     start_time = time.time()
     print(f"Starting PaddlePaddle training for {MAX_EPISODES} episodes...")
+
+    tracking_edge_count = 0
+    tracking_total_steps = 0
+    tracking_cpu_margins = []
 
     try:
         for episode in range(1, MAX_EPISODES + 1):
@@ -141,33 +147,37 @@ def train_agent():
                     # --- 专家逻辑 ---
                     for node_id in range(ACTION_DIM):
                         if not mask[node_id]: continue
-                        base_idx = node_id * 4
-                        if base_idx + 3 >= len(state): break
+                        base_idx = node_id * 5
+                        if base_idx + 4 >= len(state): break
                         
-                        cpu_safe_flag = state[base_idx + 0] 
-                        ram_safe_flag = state[base_idx + 1] 
-                        level         = state[base_idx + 3]
+                        cpu_margin = state[base_idx + 0] 
+                        ram_margin = state[base_idx + 1]
+                        cpu_capacity = state[base_idx + 2] 
+                        ram_capacity = state[base_idx + 3]
+                        level = state[base_idx + 4]
                         
-                        is_resource_enough = (cpu_safe_flag > 0) and (ram_safe_flag > 0)
+                        is_resource_enough = (cpu_margin >= -0.05) and (ram_margin >= -0.05)
 
                         if is_resource_enough:
-                            if level > 0.9: # Edge
+                            if level > 0.5: # Edge
                                 valid_edge_candidates.append(node_id)
                                 # 记录日志数据
                                 if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
-                                    debug_logs.append(f"E{node_id}")
-                            elif level < 0.1: # Cloud
+                                    debug_logs.append(f"E{node_id}(CPU余量:{cpu_margin:.2f})")
+                            elif level < 0.2: # Cloud
                                 valid_cloud_candidates.append(node_id)
+                                if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                    debug_logs.append(f"C{node_id}")
                         else:
                              # 记录满载原因
-                             if level > 0.9 and step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
-                                    debug_logs.append(f"E{node_id}(Full)")
+                            if level > 0.5 and step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                debug_logs.append(f"E{node_id}(不足:CPU={cpu_margin:.2f})")
 
                     # [调试打印] 
                     if step == 1 and episode % 50 == 0:
                         print(f"\n[Expert Debug Ep{episode}] Edges: {len(valid_edge_candidates)} | Clouds: {len(valid_cloud_candidates)}")
-                        # 现在这里不会报错了
-                        print(f"Sample Nodes: {', '.join(debug_logs)}")
+                        if debug_logs:
+                            print(f"Sample Nodes: {', '.join(debug_logs)}")
 
                     # [决策逻辑]
                     if len(valid_edge_candidates) > 0:
@@ -191,6 +201,21 @@ def train_agent():
                 else:
                     # 正常的 RL 策略 (Epsilon-Greedy)
                     action = agent.select_action(state, mask, explore=True)
+                
+                # [插入点 2] 记录当前步的决策数据
+                tracking_total_steps += 1
+                base_idx = action * 5  # 确保这里系数是 5
+                
+                # 安全检查防止越界
+                if base_idx + 4 < len(state):
+                    # Index 0 是 CPU Margin, Index 4 是 Level
+                    cpu_margin = state[base_idx + 0]
+                    level = state[base_idx + 4]
+                    
+                    if level > 0.5: # 判定为边缘节点
+                        tracking_edge_count += 1
+                    
+                    tracking_cpu_margins.append(cpu_margin)
                 # 执行动作
                 next_state, next_mask, reward, done, next_info = env.step(action)
 
@@ -230,7 +255,11 @@ def train_agent():
                 
                 if step > (ACTION_DIM * 5): 
                     break
-
+        
+            if episode % 100 == 0:
+                resource_monitor.print_summary(episode)
+                # 重置监控器
+                resource_monitor = ResourceMonitor()
             agent.decay_epsilon()
             agent.update_target_network_episode(episode)
             
@@ -243,7 +272,17 @@ def train_agent():
 
             episode_duration = time.time() - episode_start_time
             if episode % 10 == 0:
-                print(f"Ep {episode}: Reward={total_reward:.2f} | Avg Loss={avg_loss:.4f} | Avg Q={avg_q:.4f} | Epsilon={agent.epsilon:.4f} | Time={episode_duration:.1f}s")
+                # [插入点 3] 计算并打印统计信息
+                edge_rate = tracking_edge_count / tracking_total_steps if tracking_total_steps > 0 else 0
+                avg_margin = np.mean(tracking_cpu_margins) if tracking_cpu_margins else 0
+                
+                # 修改原有的 print，或者在下面加一行
+                print(f"Ep {episode}: Reward={total_reward:.2f} ... [Edge率={edge_rate:.1%} | AvgMargin={avg_margin:.3f}]")
+
+                # 关键：打印完必须重置，为下一个 10 轮做准备
+                tracking_edge_count = 0
+                tracking_total_steps = 0
+                tracking_cpu_margins = []
 
             if episode % MODEL_SAVE_FREQ == 0:
                 agent.save_model(filepath=exp_manager.model_file)
@@ -267,6 +306,31 @@ def train_agent():
             env.stop_server()
         except:
             pass
+
+class ResourceMonitor:
+    def __init__(self):
+        self.cpu_margins = []
+        self.ram_margins = []
+        self.decisions = []  # 0=云, 1=边缘
+    
+    def record(self, state, action, mask):
+        """记录节点资源余量和决策"""
+        base_idx = action * 5
+        if base_idx + 4 < len(state):
+            cpu_margin = state[base_idx]
+            ram_margin = state[base_idx + 1]
+            level = state[base_idx + 4]
+            
+            self.cpu_margins.append(cpu_margin)
+            self.ram_margins.append(ram_margin)
+            self.decisions.append(1 if level > 0.5 else 0)
+    
+    def print_summary(self, episode):
+        if self.cpu_margins:
+            avg_cpu = np.mean(self.cpu_margins)
+            avg_ram = np.mean(self.ram_margins)
+            edge_ratio = np.mean(self.decisions)
+            print(f"Ep{episode} 资源余量: CPU={avg_cpu:.3f}, RAM={avg_ram:.3f}, 边缘选择率={edge_ratio:.1%}")
 
 if __name__ == "__main__":
     print("PaddlePaddle using device:", paddle.get_device())

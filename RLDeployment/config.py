@@ -13,24 +13,24 @@ API_URL = "http://localhost:4567"  # Java 环境 REST API 的 URL
 # STATE_DIM = (3 * NUM_DEPLOYABLE_NODES) + (2 * NUM_TOTAL_MODULES) + 4
 # ACTION_DIM = NUM_DEPLOYABLE_NODES
 MAX_DEPLOYABLE_NODES = 50  
-STATE_DIM = (4 * MAX_DEPLOYABLE_NODES) + 2 
+STATE_DIM = (5 * MAX_DEPLOYABLE_NODES) + 2 
 ACTION_DIM = MAX_DEPLOYABLE_NODES
 # ---  ---
 
 # --- Dueling DQN 超参数 ---
 GAMMA = 0.99                # 折扣因子 (Discount factor)
-LEARNING_RATE = 0.00001       # Adam 优化器的学习率
+LEARNING_RATE = 0.0001       # Adam 优化器的学习率
 BUFFER_SIZE = 200000         # 经验回放缓冲区的最大容量
 BATCH_SIZE = 128             # 每次训练时从缓冲区采样的批次大小
 TARGET_UPDATE_FREQ = 100     # 目标网络更新频率 (以 Episodes 为单位)
 GRAD_CLIP_NORM = 1.0
 # --- Epsilon-Greedy 探索策略参数 ---
 EPSILON_START = 1.0         # 初始探索率
-EPSILON_DECAY = 0.9996     # 探索率衰减因子 (每个 episode 结束后乘以该值)
-EPSILON_MIN = 0.10     # 最小探索率
+EPSILON_DECAY = 0.999     # 探索率衰减因子 (每个 episode 结束后乘以该值)
+EPSILON_MIN = 0.005     # 最小探索率
 
 # --- 训练过程控制 ---
-MAX_EPISODES = 15000         # 最大训练回合数 (Episodes)
+MAX_EPISODES = 20000         # 最大训练回合数 (Episodes)
 START_TRAIN_EPISODE = 50   # 在开始训练前收集的最小经验数量
 MODEL_SAVE_FREQ = 50        # 模型权重保存频率 (以 Episodes 为单位)
 
