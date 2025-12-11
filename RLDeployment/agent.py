@@ -21,16 +21,16 @@ class DuelingDQNNet(nn.Layer):
         self.action_dim = action_dim
 
         # 共享层
-        self.shared_fc1 = nn.Linear(state_dim, 128)
-        self.shared_fc2 = nn.Linear(128, 128)
+        self.shared_fc1 = nn.Linear(state_dim, 256)
+        self.shared_fc2 = nn.Linear(256, 256)
 
         # Value 流
-        self.value_fc = nn.Linear(128, 64)
-        self.value_output = nn.Linear(64, 1) # V(s)
+        self.value_fc = nn.Linear(256, 128)
+        self.value_output = nn.Linear(128, 1) # V(s)
 
         # Advantage 流
-        self.advantage_fc = nn.Linear(128, 64)
-        self.advantage_output = nn.Linear(64, action_dim) # A(s, a)
+        self.advantage_fc = nn.Linear(256, 128)
+        self.advantage_output = nn.Linear(128, action_dim) # A(s, a)
 
         self.relu = nn.ReLU()
 
