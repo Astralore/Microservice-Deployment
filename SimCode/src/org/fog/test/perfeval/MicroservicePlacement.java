@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator; // [新增 Import]
 
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Log;
@@ -48,44 +49,26 @@ public class MicroservicePlacement {
 
     static int edgeGateways = 4;
     static Integer[] edgeNodesPerGateway = new Integer[]{11, 11, 11, 11};
+    // ... (其他静态变量保持不变) ...
     static Integer[] endDevicesPerEdgeNode = new Integer[]{3, 2, 3, 2, 1, 1};
-
     private static int edgeNodeIndex = 0;
     static boolean heterogeneousEdgeNodes = true;
 
-    static Integer[] edgeNodeCpus = new Integer[]{
-            4800, 5000, 5200, 4800, 5500,
-            6000, 5000, 4800, 5200, 5500
-    };
-
-    // RAM 也相应给足，避免内存成为瓶颈干扰 CPU 调度的实验结论
-    static Integer[] edgeNodeRam = new Integer[]{
-            4096, 8192, 4096, 4096, 8192,
-            8192, 8192, 4096, 8192, 4096
-    };
-
-    // 高性能 = 高能耗，迫使 RL 学会权衡
-    static Double[] edgeNodeBusyPower = new Double[]{
-            220.0, 230.0, 240.0, 220.0, 250.0,
-            280.0, 230.0, 220.0, 240.0, 250.0
-    };
-
-    // 待机功耗 (通常是满载的 50%-60%)
-    static Double[] edgeNodeIdlePower = new Double[]{
-            110.0, 115.0, 120.0, 110.0, 125.0,
-            140.0, 115.0, 110.0, 120.0, 125.0
-    };
+    // 保持你之前的异构资源定义
+    static Integer[] edgeNodeCpus = new Integer[]{4800, 5000, 5200, 4800, 5500, 6000, 5000, 4800, 5200, 5500};
+    static Integer[] edgeNodeRam = new Integer[]{4096, 8192, 4096, 4096, 8192, 8192, 8192, 4096, 8192, 4096};
+    static Double[] edgeNodeBusyPower = new Double[]{220.0, 230.0, 240.0, 220.0, 250.0, 280.0, 230.0, 220.0, 240.0, 250.0};
+    static Double[] edgeNodeIdlePower = new Double[]{110.0, 115.0, 120.0, 110.0, 125.0, 140.0, 115.0, 110.0, 120.0, 125.0};
 
     static Integer deviceNum = 0;
-
     public static double edgeToCloudLatency = 100.0;
     public static double gatewayToEdgeNodeLatency = 5.0;
     public static double endDeviceToEdgeNodeLatency = 2.0;
     public static Double clusterLatency = 2.0;
-
     static boolean trace_flag = false;
 
     public static void main(String[] args) {
+        // ... (Main 方法逻辑保持不变，确保使用了循环创建 40 个应用的代码) ...
         System.out.println(">>> CODE UPDATED: EdgeGateways = " + edgeGateways);
         Log.printLine("Starting MicroservicePlacement...");
 
@@ -96,80 +79,45 @@ public class MicroservicePlacement {
             CloudSim.init(num_user, calendar, trace_flag);
 
             String appId = "A0";
-
-            // 1. 创建物理环境
             createFogDevices(1, appId);
 
-            // 2. 读取配置
+            // 读取配置
             List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
             List<PlacementRequest> placementRequests = new ArrayList<>();
 
-            // 获取边缘节点列表并排序，保证分配顺序确定
+            // 获取边缘节点并排序
             List<FogDevice> edgeNodes = new ArrayList<>();
             for(FogDevice d : fogDevices) {
                 if(d.getName().startsWith("edge-node")) edgeNodes.add(d);
             }
-            edgeNodes.sort((a, b) -> Integer.compare(a.getId(), b.getId()));
+            edgeNodes.sort(Comparator.comparingInt(FogDevice::getId));
 
             System.out.println("Available Edge Nodes for Clients: " + edgeNodes.size());
 
-//            // 3. 批量创建应用 (A0-A9)
-//            // [修复] 使用索引进行轮询分配，防止负载不均
-//            int appIndex = 0;
-//
-//            for (Map<String, Object> appParams : appParamsList) {
-//                String currentAppId = (String) appParams.get("appId");
-//                int userId = ((Long) appParams.get("userId")).intValue();
-//
-//                // 创建应用
-//                Application app = createApplication(currentAppId, userId, appParams);
-//                applications.add(app);
-//
-//                // [修复逻辑] 强制均匀分配：App 0 -> Node 0, App 1 -> Node 1 ...
-//                if (edgeNodes.isEmpty()) throw new RuntimeException("No edge nodes found!");
-//
-//                FogDevice clientNode = edgeNodes.get(appIndex % edgeNodes.size());
-//                int clientNodeId = clientNode.getId();
-//
-//                System.out.println("Deploying " + currentAppId + " Client/Sensor to " + clientNode.getName() + " (ID: " + clientNodeId + ")");
-//
-//                // 创建 Sensor/Actuator 并绑定到该边缘节点
-//                createSensorAndActuator(currentAppId, userId, clientNodeId);
-//
-//                Map<String, Integer> placedMap = new HashMap<>();
-//                placedMap.put("client", clientNodeId);
-//
-//                PlacementRequest req = new PlacementRequest(app.getAppId(), 0, clientNodeId, placedMap);
-//                placementRequests.add(req);
-//
-//                // 索引递增
-//                appIndex++;
-            // 3. 批量创建应用 (扩充到 40 个，制造压力)
-            // [修改] 强制循环 40 次，复用配置
+            // --- 动态应用创建循环 ---
             int totalAppsToDeploy = 40;
             int appIndex = 0;
 
             for (int k = 0; k < totalAppsToDeploy; k++) {
-                // 循环取配置 (A0-A9 轮询使用)
                 Map<String, Object> appParams = appParamsList.get(k % appParamsList.size());
-
-                String currentAppId = "A" + k; // 强制命名 A0, A1 ... A39
+                String currentAppId = "A" + k;
                 int userId = ((Long) appParams.get("userId")).intValue();
 
-                // 创建应用
+                // [关键] 调用新的动态构建方法
                 Application app = createApplication(currentAppId, userId, appParams);
+                if (app == null) continue; // 跳过无效配置
+
                 applications.add(app);
 
-                // [强制均匀分配 Client]
+                // 分配 Client
                 if (edgeNodes.isEmpty()) throw new RuntimeException("No edge nodes found!");
                 FogDevice clientNode = edgeNodes.get(appIndex % edgeNodes.size());
                 int clientNodeId = clientNode.getId();
 
                 System.out.println("Deploying " + currentAppId + " Client to " + clientNode.getName());
-
                 createSensorAndActuator(currentAppId, userId, clientNodeId);
 
                 Map<String, Integer> placedMap = new HashMap<>();
@@ -180,21 +128,15 @@ public class MicroservicePlacement {
 
                 appIndex++;
             }
-            System.out.println("DEBUG: fogDevices list size in Main = " + fogDevices.size());
-            // 4. 初始化 Controller
+
+            // 初始化 Controller
             MicroservicesController controller = new MicroservicesController(
-                    "controller",
-                    fogDevices,
-                    sensors,
-                    applications,
-                    new ArrayList<Integer>(),
-                    clusterLatency,
-                    PlacementLogicFactory.RL_PLACEMENT
+                    "controller", fogDevices, sensors, applications,
+                    new ArrayList<Integer>(), clusterLatency, PlacementLogicFactory.RL_PLACEMENT
             );
 
             controller.submitPlacementRequests(placementRequests, 0);
 
-            // 5. 运行
             TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
             CloudSim.startSimulation();
             CloudSim.stopSimulation();
@@ -206,6 +148,135 @@ public class MicroservicePlacement {
         }
     }
 
+    // === [核心修改] 动态拓扑构建方法 ===
+    @SuppressWarnings("unchecked")
+    private static Application createApplication(String appId, int userId, Map<String, Object> params) {
+        Application application = new Application(appId, userId);
+
+        // 1. 从 Params 中提取微服务列表 (兼容 JSON 数组)
+        List<Map<String, Object>> servicesConfig = (List<Map<String, Object>>) params.get("microservices");
+
+        if (servicesConfig == null || servicesConfig.isEmpty()) {
+            System.err.println("ERROR: No 'microservices' definition found for " + appId);
+            return null;
+        }
+
+        // 2. 添加 Client 模块 (固定存在)
+        // client_mips 可以从 params 读取，也可以给默认值
+        application.addAppModule("client", 128, 500, 100);
+
+        // 3. 循环添加所有微服务模块 (Vertices)
+        for (Map<String, Object> svc : servicesConfig) {
+            String name = (String) svc.get("name");
+            // 处理数值类型转换 (JSON Simple 解析出来通常是 Long)
+            int mips = ((Number) svc.getOrDefault("mips", 1000)).intValue();
+            int ram = ((Number) svc.getOrDefault("ram", 512)).intValue();
+            int bw = ((Number) svc.getOrDefault("bw_out", 1000)).intValue(); // 简化：用 bw_out 代表模块带宽需求
+
+            application.addAppModule(name, ram, mips, bw);
+        }
+
+        // 4. 动态构建链路 (Edges)
+        // 拓扑顺序: Sensor -> Client -> Svc[0] -> Svc[1] ... -> Svc[N] -> Client -> Actuator
+
+        // 4.1 Sensor -> Client
+        application.addAppEdge("sensor", "client", 100, 200, "sensor_data", Tuple.UP, AppEdge.SENSOR);
+
+        // 4.2 Client -> First Service
+        Map<String, Object> firstSvc = servicesConfig.get(0);
+        String firstSvcName = (String) firstSvc.get("name");
+        double firstInBw = ((Number) firstSvc.getOrDefault("bw_in", 1000)).doubleValue();
+
+        String clientToFirstTuple = "c_" + firstSvcName; // 命名规则: c_target
+        application.addAppEdge("client", firstSvcName, firstInBw, 1000, clientToFirstTuple, Tuple.UP, AppEdge.MODULE);
+
+        // 映射: sensor_data -> c_first
+        application.addTupleMapping("client", "sensor_data", clientToFirstTuple, new FractionalSelectivity(1.0));
+
+        // 4.3 Service -> Service (中间链条)
+        for (int i = 0; i < servicesConfig.size() - 1; i++) {
+            Map<String, Object> currSvc = servicesConfig.get(i);
+            Map<String, Object> nextSvc = servicesConfig.get(i + 1);
+
+            String currName = (String) currSvc.get("name");
+            String nextName = (String) nextSvc.get("name");
+            double outBw = ((Number) currSvc.getOrDefault("bw_out", 1000)).doubleValue();
+
+            String tupleType = currName + "_" + nextName; // 命名规则: src_dest
+
+            // 确定输入 Tuple 类型 (用于 Selectivity 映射)
+            String inputTupleType;
+            if (i == 0) {
+                inputTupleType = clientToFirstTuple;
+            } else {
+                String prevName = (String) servicesConfig.get(i - 1).get("name");
+                inputTupleType = prevName + "_" + currName;
+            }
+
+            application.addAppEdge(currName, nextName, outBw, 1000, tupleType, Tuple.UP, AppEdge.MODULE);
+            application.addTupleMapping(currName, inputTupleType, tupleType, new FractionalSelectivity(1.0));
+        }
+
+        // 4.4 Last Service -> Client
+        Map<String, Object> lastSvc = servicesConfig.get(servicesConfig.size() - 1);
+        String lastName = (String) lastSvc.get("name");
+        double lastOutBw = ((Number) lastSvc.getOrDefault("bw_out", 1000)).doubleValue();
+
+        String lastToClientTuple = lastName + "_c";
+
+        // 确定最后一个服务的输入 Tuple
+        String lastInputTuple;
+        if (servicesConfig.size() == 1) {
+            lastInputTuple = clientToFirstTuple;
+        } else {
+            String prevName = (String) servicesConfig.get(servicesConfig.size() - 2).get("name");
+            lastInputTuple = prevName + "_" + lastName;
+        }
+
+        application.addAppEdge(lastName, "client", lastOutBw, 1000, lastToClientTuple, Tuple.DOWN, AppEdge.MODULE);
+        application.addTupleMapping(lastName, lastInputTuple, lastToClientTuple, new FractionalSelectivity(1.0));
+
+        // 4.5 Client -> Actuator
+        application.addAppEdge("client", "actuator", 100, 200, "action", Tuple.DOWN, AppEdge.ACTUATOR);
+        application.addTupleMapping("client", lastToClientTuple, "action", new FractionalSelectivity(1.0));
+
+        // 5. 构建 Loop (用于时延监控)
+        List<String> loopModules = new ArrayList<>();
+        loopModules.add("sensor");
+        loopModules.add("client");
+        for (Map<String, Object> svc : servicesConfig) {
+            loopModules.add((String) svc.get("name"));
+        }
+        loopModules.add("client");
+        loopModules.add("actuator");
+
+        final AppLoop appLoop = new AppLoop(loopModules);
+        List<AppLoop> loops = new ArrayList<AppLoop>() {{ add(appLoop); }};
+        application.setLoops(loops);
+
+        return application;
+    }
+
+    // ... (createSensorAndActuator, createFogDevices, parseApplicationConfig 等辅助方法保持不变) ...
+    // 为了完整性，下面列出 parseApplicationConfig 以确保其兼容新的 List 结构
+
+    private static List<Map<String, Object>> parseApplicationConfig(String filePath) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        JSONParser parser = new JSONParser();
+        try {
+            JSONArray jsonArray = (JSONArray) parser.parse(new FileReader(filePath));
+            for (Object obj : jsonArray) {
+                JSONObject jsonObject = (JSONObject) obj;
+                // JSONSimple 的 JSONObject 实现了 Map 接口，可以直接强转
+                list.add(new HashMap<>(jsonObject));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return list;
+    }
+
+    // ... (createFogDevices 等方法请保持您原来的实现) ...
     private static void createSensorAndActuator(String appId, int userId, int parentDeviceId) {
         Sensor sensor = new Sensor("s-" + appId, "sensor_data", userId, appId, new DeterministicDistribution(5));
         sensor.setGatewayDeviceId(parentDeviceId);
@@ -218,43 +289,8 @@ public class MicroservicePlacement {
         actuators.add(actuator);
     }
 
-    private static Application createApplication(String appId, int userId, Map<String, Object> params) {
-        Application application = new Application(appId, userId);
-
-        int m1Mips = ((Long) params.getOrDefault("mService1_mips", 1000L)).intValue();
-        int m2Mips = ((Long) params.getOrDefault("mService2_mips", 1500L)).intValue();
-        int m3Mips = ((Long) params.getOrDefault("mService3_mips", 1000L)).intValue();
-
-        System.out.println(String.format("DEBUG: App %s Created with MIPS: m1=%d, m2=%d, m3=%d", appId, m1Mips, m2Mips, m3Mips));
-
-        application.addAppModule("client", 128, 500, 100);
-        application.addAppModule("mService1", 1024, m1Mips, 1000);
-        application.addAppModule("mService2", 2048, m2Mips, 1000);
-        application.addAppModule("mService3", 1024, m3Mips, 1000);
-
-        application.addAppEdge("sensor", "client", 100, 200, "sensor_data", Tuple.UP, AppEdge.SENSOR);
-        application.addAppEdge("client", "mService1", 2000, 1000, "c_m1", Tuple.UP, AppEdge.MODULE);
-        application.addAppEdge("mService1", "mService2", 2500, 1000, "m1_m2", Tuple.UP, AppEdge.MODULE);
-        application.addAppEdge("mService2", "mService3", 2000, 1000, "m2_m3", Tuple.UP, AppEdge.MODULE);
-        application.addAppEdge("mService3", "client", 1000, 500, "m3_c", Tuple.DOWN, AppEdge.MODULE);
-        application.addAppEdge("client", "actuator", 100, 200, "action", Tuple.DOWN, AppEdge.ACTUATOR);
-
-        application.addTupleMapping("client", "sensor_data", "c_m1", new FractionalSelectivity(1.0));
-        application.addTupleMapping("mService1", "c_m1", "m1_m2", new FractionalSelectivity(1.0));
-        application.addTupleMapping("mService2", "m1_m2", "m2_m3", new FractionalSelectivity(1.0));
-        application.addTupleMapping("mService3", "m2_m3", "m3_c", new FractionalSelectivity(1.0));
-        application.addTupleMapping("client", "m3_c", "action", new FractionalSelectivity(1.0));
-
-        final AppLoop loop1 = new AppLoop(new ArrayList<String>() {{
-            add("sensor"); add("client"); add("mService1"); add("mService2"); add("mService3"); add("client"); add("actuator");
-        }});
-        List<AppLoop> loops = new ArrayList<AppLoop>() {{ add(loop1); }};
-        application.setLoops(loops);
-
-        return application;
-    }
-
     private static void createFogDevices(int userId, String appId) {
+        // ... (保持你原来代码中的 createFogDevices 实现，包含异构资源分配逻辑) ...
         // Cloud 节点配置
         FogDevice cloud = createFogDeviceHelper("cloud", 100000, 40000, 10000, 10000, 0, 0.01, 100, 100, MicroserviceFogDevice.CLOUD);
         cloud.setParentId(-1);
@@ -295,9 +331,7 @@ public class MicroservicePlacement {
                 edge.setLevel(2);
                 fogDevices.add(edge);
             }
-            System.out.println("DEBUG: Finished Gateway-" + i + " loop. List size: " + fogDevices.size());
         }
-        System.out.println("DEBUG: createFogDevices Finished. Final List size: " + fogDevices.size());
     }
 
     private static FogDevice createFogDeviceHelper(String nodeName, long mips, int ram, long upBw, long downBw, int level, double ratePerMips, double busyPower, double idlePower, String deviceType) {
@@ -315,20 +349,5 @@ public class MicroservicePlacement {
             e.printStackTrace();
             return null;
         }
-    }
-
-    private static List<Map<String, Object>> parseApplicationConfig(String filePath) {
-        List<Map<String, Object>> list = new ArrayList<>();
-        JSONParser parser = new JSONParser();
-        try {
-            JSONArray jsonArray = (JSONArray) parser.parse(new FileReader(filePath));
-            for (Object obj : jsonArray) {
-                JSONObject jsonObject = (JSONObject) obj;
-                list.add(new HashMap<>(jsonObject));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return list;
     }
 }
