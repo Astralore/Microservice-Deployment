@@ -101,7 +101,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 2. 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice-Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
@@ -116,27 +116,60 @@ public class MicroservicePlacement {
 
             System.out.println("Available Edge Nodes for Clients: " + edgeNodes.size());
 
-            // 3. 批量创建应用 (A0-A9)
-            // [修复] 使用索引进行轮询分配，防止负载不均
+//            // 3. 批量创建应用 (A0-A9)
+//            // [修复] 使用索引进行轮询分配，防止负载不均
+//            int appIndex = 0;
+//
+//            for (Map<String, Object> appParams : appParamsList) {
+//                String currentAppId = (String) appParams.get("appId");
+//                int userId = ((Long) appParams.get("userId")).intValue();
+//
+//                // 创建应用
+//                Application app = createApplication(currentAppId, userId, appParams);
+//                applications.add(app);
+//
+//                // [修复逻辑] 强制均匀分配：App 0 -> Node 0, App 1 -> Node 1 ...
+//                if (edgeNodes.isEmpty()) throw new RuntimeException("No edge nodes found!");
+//
+//                FogDevice clientNode = edgeNodes.get(appIndex % edgeNodes.size());
+//                int clientNodeId = clientNode.getId();
+//
+//                System.out.println("Deploying " + currentAppId + " Client/Sensor to " + clientNode.getName() + " (ID: " + clientNodeId + ")");
+//
+//                // 创建 Sensor/Actuator 并绑定到该边缘节点
+//                createSensorAndActuator(currentAppId, userId, clientNodeId);
+//
+//                Map<String, Integer> placedMap = new HashMap<>();
+//                placedMap.put("client", clientNodeId);
+//
+//                PlacementRequest req = new PlacementRequest(app.getAppId(), 0, clientNodeId, placedMap);
+//                placementRequests.add(req);
+//
+//                // 索引递增
+//                appIndex++;
+            // 3. 批量创建应用 (扩充到 40 个，制造压力)
+            // [修改] 强制循环 40 次，复用配置
+            int totalAppsToDeploy = 40;
             int appIndex = 0;
 
-            for (Map<String, Object> appParams : appParamsList) {
-                String currentAppId = (String) appParams.get("appId");
+            for (int k = 0; k < totalAppsToDeploy; k++) {
+                // 循环取配置 (A0-A9 轮询使用)
+                Map<String, Object> appParams = appParamsList.get(k % appParamsList.size());
+
+                String currentAppId = "A" + k; // 强制命名 A0, A1 ... A39
                 int userId = ((Long) appParams.get("userId")).intValue();
 
                 // 创建应用
                 Application app = createApplication(currentAppId, userId, appParams);
                 applications.add(app);
 
-                // [修复逻辑] 强制均匀分配：App 0 -> Node 0, App 1 -> Node 1 ...
+                // [强制均匀分配 Client]
                 if (edgeNodes.isEmpty()) throw new RuntimeException("No edge nodes found!");
-
                 FogDevice clientNode = edgeNodes.get(appIndex % edgeNodes.size());
                 int clientNodeId = clientNode.getId();
 
-                System.out.println("Deploying " + currentAppId + " Client/Sensor to " + clientNode.getName() + " (ID: " + clientNodeId + ")");
+                System.out.println("Deploying " + currentAppId + " Client to " + clientNode.getName());
 
-                // 创建 Sensor/Actuator 并绑定到该边缘节点
                 createSensorAndActuator(currentAppId, userId, clientNodeId);
 
                 Map<String, Integer> placedMap = new HashMap<>();
@@ -145,7 +178,6 @@ public class MicroservicePlacement {
                 PlacementRequest req = new PlacementRequest(app.getAppId(), 0, clientNodeId, placedMap);
                 placementRequests.add(req);
 
-                // 索引递增
                 appIndex++;
             }
             System.out.println("DEBUG: fogDevices list size in Main = " + fogDevices.size());

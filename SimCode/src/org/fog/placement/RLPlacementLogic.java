@@ -123,44 +123,56 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
     }
 
     private void resetInternalState(List<PlacementRequest> requests) {
+        // 1. 重置核心数据结构
         this.placementQueue = new LinkedList<>();
         this.currentPlacementMap = new HashMap<>();
         this.currentCpuLoad = new HashMap<>();
         this.currentRamLoad = new HashMap<>();
         this.currentModuleIndex = 0;
 
+        // 防止 Agent 死记硬背任务到达的顺序
+        List<PlacementRequest> shuffledRequests = new ArrayList<>(requests);
+        Collections.shuffle(shuffledRequests, new Random());
+
+        // 让每一轮 Episode 的"初始难度"都不同
+        // maxBackgroundLoad 在 10% 到 40% 之间波动
         Random rand = new Random();
+        double maxBackgroundLoad = 0.1 + rand.nextDouble() * 0.2;
+
+        // 2. 初始化节点负载
         for (FogDevice dev : deployableNodes) {
             double totalMips = dev.getHost().getTotalMips();
             double loadFactor = 0.0;
 
             if (dev.getName().toLowerCase().contains("cloud")) {
-                loadFactor = 0.01;
+                loadFactor = 0.01; // Cloud 始终保持空闲
             } else if (dev.getName().toLowerCase().contains("gateway")) {
-                loadFactor = 0.1 + rand.nextDouble() * 0.2;
+                loadFactor = 0.1 + rand.nextDouble() * 0.2; // Gateway 负载稍高
             } else {
-                // 边缘节点 0% - 25% 随机负载
-                loadFactor = rand.nextDouble() * 0.30;
+                // Edge 节点：在 [0, maxBackgroundLoad] 之间随机
+                loadFactor = rand.nextDouble() * maxBackgroundLoad;
             }
 
             currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
             currentRamLoad.put(dev.getId(), (int)(dev.getHost().getRam() * loadFactor));
         }
-//        for (FogDevice dev : deployableNodes) {
-//            // 初始负载设为 0 (完全空闲)
-//            currentCpuLoad.put(dev.getId(), 0.0);
-//            currentRamLoad.put(dev.getId(), 0);
-//        }
+
+        // 3. 初始化预部署组件 (Client / Sensor)
+        // 注意：必须遍历 shuffledRequests，以保持随机性
         Set<String> placedModules = new HashSet<>();
-        for (PlacementRequest req : requests) {
+
+        for (PlacementRequest req : shuffledRequests) {
             Application app = applicationInfo.get(req.getApplicationId());
 
             String clientKey = app.getAppId() + "_client";
             String sensorKey = "s-" + app.getAppId();
+
+            // 记录 Client/Sensor 的位置 (通常在端侧或网关)
             currentPlacementMap.put(clientKey, req.getGatewayDeviceId());
             currentPlacementMap.put(sensorKey, req.getGatewayDeviceId());
             currentPlacementMap.put(app.getAppId() + "_sensor", req.getGatewayDeviceId());
 
+            // 如果请求中包含已固定的微服务 (RL场景通常没有，但为了兼容保留)
             for (Map.Entry<String, Integer> entry : req.getPlacedMicroservices().entrySet()) {
                 String uniqueName = app.getAppId() + "_" + entry.getKey();
                 placedModules.add(uniqueName);
@@ -169,26 +181,35 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             }
         }
 
+        // 4. 构建任务队列 (解析拓扑依赖)
+        // 核心逻辑：只有当前置依赖(Predecessor)已经部署了，当前服务才能进队列
         boolean progress = true;
         while (progress) {
             progress = false;
-            for (PlacementRequest req : requests) {
+            // 再次遍历打乱后的列表，保证进队列的顺序也是打乱的
+            for (PlacementRequest req : shuffledRequests) {
                 Application app = applicationInfo.get(req.getApplicationId());
+
                 for (AppModule mod : app.getModules()) {
                     String uniqueName = app.getAppId() + "_" + mod.getName();
+                    // 如果已经部署过，跳过
                     if (placedModules.contains(uniqueName)) continue;
 
+                    // 检查依赖
                     boolean dependenciesMet = true;
                     for (AppEdge edge : app.getEdges()) {
                         if (edge.getDestination().equals(mod.getName()) && edge.getDirection() == Tuple.UP) {
                             String sourceUnique = app.getAppId() + "_" + edge.getSource();
+
+                            // 检查源头是否已在 map 中或 placedModules 集合中
+                            // 注意：Client/Sensor 已经在上面步骤 put 进 map 了
                             if (!currentPlacementMap.containsKey(sourceUnique) && !placedModules.contains(sourceUnique)) {
                                 dependenciesMet = false;
                                 break;
                             }
                         }
                     }
-
+                    // 依赖满足，加入待部署队列
                     if (dependenciesMet) {
                         placementQueue.add(new QueuedModule(mod.getName(), app.getAppId(), mod));
                         placedModules.add(uniqueName);
@@ -200,116 +221,125 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
     }
 
     private ActionResult executeAction(int actionNodeIndex) {
-        if (currentModuleIndex >= placementQueue.size()) return new ActionResult(null, 0, true);
-        if (actionNodeIndex >= deployableNodes.size()) return new ActionResult(buildStateRepresentation("Invalid", false), -100.0, false);
+        // 1. 边界检查
+        if (currentModuleIndex >= placementQueue.size()) {
+            return new ActionResult(null, 0, true);
+        }
+
+        // 如果 Agent 选了非法的动作索引 (比如超出范围)，给巨额惩罚
+        if (actionNodeIndex >= deployableNodes.size()) {
+            return new ActionResult(buildStateRepresentation("Invalid Action", false), -100.0, false);
+        }
 
         QueuedModule curr = placementQueue.get(currentModuleIndex);
         FogDevice node = deployableNodes.get(actionNodeIndex);
 
+        // 2. 检查资源是否真的足够 (这是物理硬约束，Mask 应该已经挡住了，这里是双重保险)
         double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
         double totalMips = node.getHost().getTotalMips();
         boolean enoughCpu = (totalMips - currentMips) >= curr.moduleObj.getMips();
-        boolean enoughRam = (node.getHost().getRam() - currentRamLoad.getOrDefault(node.getId(), 0)) >= curr.moduleObj.getRam();
+
+        int currentRam = currentRamLoad.getOrDefault(node.getId(), 0);
+        int totalRam = node.getHost().getRam();
+        boolean enoughRam = (totalRam - currentRam) >= curr.moduleObj.getRam();
 
         double reward = 0.0;
         String desc;
+
         if (enoughCpu && enoughRam) {
+            // === 部署成功，执行状态更新 ===
             updateSimulatedLoad(node.getId(), curr.moduleObj);
             currentPlacementMap.put(curr.getKey(), node.getId());
 
-            double baseReward = 100.0;
-            boolean isCloud = node.getName().toLowerCase().contains("cloud");
+            // =============================================================
+            // 目标：在 "局部性(低延迟)" 和 "负载均衡(防拥堵)" 之间博弈
+            // =============================================================
 
-            // 时延惩罚
-            double latencyPenalty = 0.0;
-            if (isCloud) {
-                latencyPenalty = 95.0;
-            } else {
-                latencyPenalty = 0.0;
-            }
-
-            double idlePwr = 50.0, busyPwr = 80.0;
-            if (totalMips > 3500) { busyPwr = 250.0; idlePwr = 180.0; }
-            else if (totalMips > 2500) { busyPwr = 120.0; idlePwr = 85.0; }
-
-            double cpuUsageFraction = curr.moduleObj.getMips() / totalMips;
-            double estimatedPowerCost = (busyPwr - idlePwr) * cpuUsageFraction + idlePwr * 0.1;
-            double energyPenalty = (estimatedPowerCost / 100.0) * 5.0;
-            if(energyPenalty > 10.0) energyPenalty = 10.0;
-
-            double transmissionPenalty = 0.0;
+            // --- 1. 局部性奖励 (Locality Reward) ---
+            // 逻辑：找到当前微服务的上游(Predecessor)，看它在哪
+            double transmissionReward = 0.0;
             Application app = applicationInfo.get(curr.appId);
+
             for (AppEdge edge : app.getEdges()) {
+                // 找到指向当前模块的边 (Tuple.UP)
                 if (edge.getDestination().equals(curr.moduleName) && edge.getDirection() == Tuple.UP) {
                     String sourceKey = curr.appId + "_" + edge.getSource();
+                    // 处理特殊的源名称
                     if (edge.getSource().equals("client")) sourceKey = curr.appId + "_client";
-                    else if (edge.getSource().startsWith("s-")) sourceKey = edge.getSource();
-                    else if (edge.getSource().equals("sensor")) sourceKey = curr.appId + "_sensor";
+                    else if (edge.getSource().startsWith("s-")) sourceKey = edge.getSource(); // sensor
 
                     if (currentPlacementMap.containsKey(sourceKey)) {
                         int sourceId = currentPlacementMap.get(sourceKey);
-                        FogDevice sourceNode = fogDeviceMap.get(sourceId);
-                        if (sourceNode != null) {
-                            if (sourceId == node.getId()) transmissionPenalty += 0.0;
-                            else if (sourceNode.getParentId() == node.getParentId() && sourceNode.getParentId() != -1) transmissionPenalty += 5.0;
-                            else transmissionPenalty += 15.0;
+
+                        if (sourceId == node.getId()) {
+                            // [完美] 同一节点，无网络开销
+                            transmissionReward += 20.0;
+                        } else {
+                            FogDevice sourceNode = fogDeviceMap.get(sourceId);
+                            // 检查是否在同一个网关下 (Parent 相同)
+                            if (sourceNode != null && sourceNode.getParentId() == node.getParentId() && sourceNode.getParentId() != -1) {
+                                // [不错] 同邻居，延迟较低
+                                transmissionReward += 10.0;
+                            } else {
+                                // [差] 跨网关或跨层级，产生高延迟
+                                transmissionReward -= 10.0;
+                            }
                         }
                     }
                 }
             }
 
+            // --- 2. 负载均衡惩罚 (Load Balancing Penalty) ---
+            // 逻辑：如果节点变得太拥挤 (>70%)，开始给予非线性惩罚
+            // 迫使 RL 在节点快满时，主动放弃"局部性"，去寻找新的空闲节点
             double newUtilization = (currentMips + curr.moduleObj.getMips()) / totalMips;
-//            double lbBonus = (1.0 - newUtilization) * 5.0;
+            double loadPenalty = 0.0;
 
-            // 方案1：非线性惩罚
-            // 当利用率超过阈值时，惩罚急剧增加
-            double lbBonus = 0.0;
-            if (newUtilization < 0.6) {
-                lbBonus = (0.6 - newUtilization) * 15.0;  // 低负载奖励
-            } else if (newUtilization > 0.8) {
-                lbBonus = - (newUtilization - 0.8) * 50.0; // 高负载惩罚
-            }
-            double collocationBonus = 0.0;
-
-            // 检查同一应用的其他微服务部署位置
-            Set<Integer> sameAppNodeIds = new HashSet<>();
-
-            for (Map.Entry<String, Integer> entry : currentPlacementMap.entrySet()) {
-                if (entry.getKey().startsWith(curr.appId + "_")) {
-                    sameAppNodeIds.add(entry.getValue());
-                }
+            if (newUtilization > 0.9) {
+                loadPenalty = -60.0; // 极度危险，接近满载，重罚
+            } else if (newUtilization > 0.7) {
+                // 指数级增长的惩罚: 0.7->0, 0.8->-10, 0.9->-40
+                loadPenalty = Math.pow((newUtilization - 0.7) * 20, 2) * -1.0;
             }
 
-            // 如果当前节点已有同应用的微服务，给予奖励
-            if (sameAppNodeIds.contains(node.getId())) {
-                collocationBonus = 30.0;  // 同一节点共置
-            } else {
-                // 检查是否有同父节点的节点（同一网关下）
-                for (int otherNodeId : sameAppNodeIds) {
-                    FogDevice otherNode = fogDeviceMap.get(otherNodeId);
-                    if (otherNode != null && otherNode.getParentId() == node.getParentId()) {
-                        collocationBonus = 15.0;  // 同一网关下
-                        break;
-                    }
-                }
+            // --- 3. 基础生存分 (Base Reward) ---
+            double baseReward = 50.0;
+            boolean isCloud = node.getName().toLowerCase().contains("cloud");
+
+            if (isCloud) {
+                // Cloud 只有低保分，除非所有 Edge 都挤爆了(-60 penalty)，否则 RL 不会选 Cloud
+                baseReward = 5.0;
             }
-            // 更新最终奖励
-            reward = baseReward + lbBonus + collocationBonus - energyPenalty - latencyPenalty - transmissionPenalty;
-//            reward = baseReward + lbBonus - energyPenalty - latencyPenalty - transmissionPenalty;
-            desc = String.format("Placed %s on %s | Type:%s | Lat:-%.1f Pwr:-%.1f Link:-%.1f | R: %.2f",
-                    curr.moduleName, node.getName(), (isCloud?"CLOUD":"EDGE"),
-                    latencyPenalty, energyPenalty, transmissionPenalty, reward);
+
+            // --- 4. 总分计算 ---
+            // 理想情况 (Edge空闲+同节点): 50 + 0 + 20 = 70
+            // 拥堵情况 (Edge满载+同节点): 50 - 60 + 20 = 10 (不如去空闲的远端)
+            // 兜底情况 (Cloud): 5 + 0 - 10 = -5 (比失败强)
+            reward = baseReward + transmissionReward + loadPenalty;
+
+            desc = String.format("Placed %s on %s | Base:%.0f Link:%+.1f LoadPen:%.1f | R: %.2f",
+                    curr.moduleName, node.getName(), baseReward, transmissionReward, loadPenalty, reward);
+
+            // 打印日志 (可选，如果不希望刷屏可以注释掉)
             System.out.println(desc);
 
         } else {
-            reward = -60.0;
+            // === 部署失败 ===
+            // 即使 Mask 挡住了大部分，但如果是 Cloud 也没资源了(极其罕见)，或者并发冲突，这里做兜底
+            // 给一个比 Cloud 略低的惩罚，但不要太低，以免训练震荡
+            reward = -50.0;
             desc = "Failed (Resource)";
         }
 
+        // 推进到下一个微服务
         currentModuleIndex++;
         boolean done = (currentModuleIndex >= placementQueue.size());
+
+        // 全局完成奖励 (可选：给一个大大的赞)
         if (done && reward > 0) reward += 10.0;
 
+        // 生成下一个状态
+        // 注意：这里调用的是 buildStateRepresentation
         return new ActionResult(buildStateRepresentation(desc, false), reward, done);
     }
 
@@ -319,32 +349,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         currentRamLoad.put(nodeId, currentRamLoad.getOrDefault(nodeId, 0) + mod.getRam());
     }
 
-    // [新增] 生成环境快照 (Prompt)
-//    private String generateEnvironmentDescription(QueuedModule curr) {
-//        StringBuilder sb = new StringBuilder();
-//        sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
-//                curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
-//        sb.append("Nodes Status (Top 15 relevant):\n");
-//
-//        int count = 0;
-//        for (FogDevice node : deployableNodes) {
-//            // 简单筛选：只展示 Cloud 和有一定空闲的 Edge，防止Prompt太长
-//            if (count > 15) break;
-//
-//            double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
-//            double totalMips = node.getHost().getTotalMips();
-//            double freeMips = totalMips - currentMips;
-//
-//            // 跳过那些已经彻底满载的低配节点，减少噪声
-//            if (freeMips < 100 && !node.getName().contains("cloud")) continue;
-//
-//            String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
-//            sb.append(String.format("- ID %d (%s): Total %.0f MIPS, Free %.0f.\n",
-//                    node.getId(), type, totalMips, freeMips));
-//            count++;
-//        }
-//        return sb.toString();
-//    }
     // [增强版] 生成环境快照 (Prompt) - 补充 RAM 和 链路信息
     private String generateEnvironmentDescription(QueuedModule curr) {
         StringBuilder sb = new StringBuilder();
@@ -409,91 +413,100 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
     }
 
 
-//去掉mask的方案
+
 private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {
     List<Double> state = new ArrayList<>();
     List<Boolean> mask = new ArrayList<>();
 
-    // 1. 获取当前等待部署的任务信息
+    // 1. 获取当前任务
     QueuedModule currentTask = null;
     double reqMips = 0;
-    double reqRam = 0;
+    String predecessorKey = null;
+
     if (currentModuleIndex < placementQueue.size()) {
         currentTask = placementQueue.get(currentModuleIndex);
         reqMips = currentTask.moduleObj.getMips();
-        reqRam = currentTask.moduleObj.getRam();
+
+        // 寻找前置节点 Key
+        Application app = applicationInfo.get(currentTask.appId);
+        for (AppEdge edge : app.getEdges()) {
+            if (edge.getDestination().equals(currentTask.moduleName) && edge.getDirection() == Tuple.UP) {
+                String sourceName = edge.getSource();
+                if (sourceName.equals("client")) predecessorKey = currentTask.appId + "_client";
+                else if (sourceName.startsWith("s-")) predecessorKey = sourceName;
+                else predecessorKey = currentTask.appId + "_" + sourceName;
+                break;
+            }
+        }
     }
 
+    int prevNodeId = -1;
+    if (predecessorKey != null && currentPlacementMap.containsKey(predecessorKey)) {
+        prevNodeId = currentPlacementMap.get(predecessorKey);
+    }
+
+    // 2. 遍历节点生成 3 维特征
     for (int i = 0; i < MAX_NODES; i++) {
         if (i < deployableNodes.size()) {
             FogDevice dev = deployableNodes.get(i);
-
-            // 1. 连续型资源余量特征（关键修改！）
             double totalMips = dev.getHost().getTotalMips();
             double usedMips = currentCpuLoad.getOrDefault(dev.getId(), 0.0);
-            double freeMips = totalMips - usedMips;
-            double cpuMargin = (freeMips - reqMips) / totalMips;  // 正数=充足，负数=不足
-
             int totalRam = dev.getHost().getRam();
             int usedRam = currentRamLoad.getOrDefault(dev.getId(), 0);
-            int freeRam = totalRam - usedRam;
-            double ramMargin = (freeRam - reqRam) / (double) totalRam;
 
-            // 2. 节点能力特征
-            double cpuCapacity = totalMips / 5000.0;  // 归一化
-            double ramCapacity = totalRam / 8192.0;
+            // --- 特征 1: 负载压力 (Load Pressure) ---
+            double loadPressure = usedMips / totalMips;
 
-            // 3. 层级特征（保持原样）
-            double level = dev.getLevel() / 2.0;
-
-            state.add(cpuMargin);      // [-∞, +∞] 正数更好
-            state.add(ramMargin);      // [-∞, +∞] 正数更好
-            state.add(cpuCapacity);    // [0, +∞] 越大越好
-            state.add(ramCapacity);    // [0, +∞] 越大越好
-            state.add(level);          // [0, 1] Cloud=0, Edge=0.5-1
-            // 新增特征6：当前利用率
-            double currentUtilization = currentCpuLoad.getOrDefault(dev.getId(), 0.0) / totalMips;
-            state.add(currentUtilization);
-
-            // 新增特征7：部署计数（已部署的微服务数量）
-            int deployedCount = 0;
-            for (Map.Entry<String, Integer> entry : currentPlacementMap.entrySet()) {
-                if (entry.getValue() == dev.getId()) {
-                    deployedCount++;
-                }
+            // --- 特征 2: 链路代价 (Link Cost) ---
+            double linkCost = 0.5;
+            if (prevNodeId != -1) {
+                if (dev.getId() == prevNodeId) linkCost = 0.0;
+                else if (fogDeviceMap.get(dev.getId()).getParentId() == fogDeviceMap.get(prevNodeId).getParentId()) linkCost = 0.2;
+                else linkCost = 0.5;
             }
-            state.add(deployedCount / 10.0);
-            // 4. 恢复掩码机制（防止选择资源不足节点）
-            boolean canDeploy = (cpuMargin >= -0.05 && ramMargin >= -0.05); // 允许5%的小幅不足
-            // 或者更严格：boolean canDeploy = (cpuMargin >= 0 && ramMargin >= 0);
+            if (dev.getName().contains("cloud")) linkCost = 1.0;
+
+            // --- 特征 3: 资源余量评分 (Margin Ratio) ---
+            // 剩余资源是需求的几倍？归一化到 [0, 1]
+            double freeMips = totalMips - usedMips;
+            double marginRatio = 0.0;
+            if (reqMips > 0 && reqMips <= freeMips) {
+                marginRatio = Math.min((freeMips / reqMips) / 5.0, 1.0);
+            } else if (reqMips > 0) {
+                marginRatio = -1.0; // 表示资源不足
+            }
+
+            state.add(loadPressure); // Dim 1
+            state.add(linkCost);     // Dim 2
+            state.add(marginRatio);  // Dim 3
+
+            // --- Mask (硬约束) ---
+            boolean canDeploy = false;
+            if (dev.getName().contains("cloud")) {
+                // Cloud 可以有更大余量，但也要检查
+                canDeploy = (freeMips >= reqMips * 0.8);
+            } else {
+                // Edge 严格检查
+                canDeploy = (freeMips >= reqMips * 1.0);
+            }
             mask.add(canDeploy);
+
         } else {
             // Padding
-            state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0); state.add(0.0);
+            state.add(1.0); state.add(1.0); state.add(0.0);
             mask.add(false);
         }
     }
 
-    // 任务特征 (保留)
+    // 任务特征
     if (currentTask != null) {
         state.add(reqMips / 5000.0);
-        state.add(reqRam / 4096.0);
+        state.add(0.0);
     } else {
         state.add(0.0); state.add(0.0);
     }
 
-    // 生成 LLM 描述
-    String finalDesc = "";
-    if (isPreDecision && currentModuleIndex < placementQueue.size()) {
-        finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
-    } else {
-        if (currentModuleIndex < placementQueue.size()) {
-            finalDesc = generateEnvironmentDescription(placementQueue.get(currentModuleIndex));
-        } else {
-            finalDesc = "Episode Finished";
-        }
-    }
-
+    String finalDesc = (isPreDecision && currentTask != null) ? generateEnvironmentDescription(currentTask) : "";
     return new StateRepresentation(state, mask, finalDesc);
 }
 
@@ -588,8 +601,8 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
         for (Map.Entry<Integer, Integer> entry : nodeLoadCount.entrySet()) {
             FogDevice dev = fogDeviceMap.get(entry.getKey());
             if (dev != null) {
-                double mipsPerService = 1500.0; // 平均微服务MIPS需求
-                double estimatedUtil = (entry.getValue() * mipsPerService) / dev.getHost().getTotalMips();
+                double realUsedMips = currentCpuLoad.getOrDefault(entry.getKey(), 0.0);
+                double estimatedUtil = (entry.getValue() * realUsedMips) / dev.getHost().getTotalMips();
                 String warning = estimatedUtil > 0.8 ? "⚠过载" : "✓正常";
                 System.out.printf("%6d | %10d | %s (预计利用率: %.1f%%)\n",
                         entry.getKey(), entry.getValue(), warning, estimatedUtil * 100);

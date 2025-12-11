@@ -13,7 +13,7 @@ API_URL = "http://localhost:4567"  # Java 环境 REST API 的 URL
 # STATE_DIM = (3 * NUM_DEPLOYABLE_NODES) + (2 * NUM_TOTAL_MODULES) + 4
 # ACTION_DIM = NUM_DEPLOYABLE_NODES
 MAX_DEPLOYABLE_NODES = 50  
-STATE_DIM = (7 * MAX_DEPLOYABLE_NODES) + 2 
+STATE_DIM = (3 * MAX_DEPLOYABLE_NODES) + 2 
 ACTION_DIM = MAX_DEPLOYABLE_NODES
 # ---  ---
 
@@ -26,8 +26,8 @@ TARGET_UPDATE_FREQ = 100     # 目标网络更新频率 (以 Episodes 为单位)
 GRAD_CLIP_NORM = 1.0
 # --- Epsilon-Greedy 探索策略参数 ---
 EPSILON_START = 1.0         # 初始探索率
-EPSILON_DECAY = 0.999     # 探索率衰减因子 (每个 episode 结束后乘以该值)
-EPSILON_MIN = 0.005     # 最小探索率
+EPSILON_DECAY = 0.9995     # 探索率衰减因子 (每个 episode 结束后乘以该值)
+EPSILON_MIN = 0.01     # 最小探索率
 
 # --- 训练过程控制 ---
 MAX_EPISODES = 20000         # 最大训练回合数 (Episodes)

@@ -28,10 +28,10 @@ class ExperimentManager:
         self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
     def save_llm_data(self, description, action, reward):
-        # 阈值保持 30 或 35 均可，这里用 30 保证收集足够数据
+        # 记录高质量的决策数据
         if reward > 35.0 and description:
             entry = {
-                "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with sufficient resources to minimize latency.",
+                "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with low latency and balanced load.",
                 "input": description,
                 "output": str(action),
                 "reward": round(reward, 2)
@@ -91,7 +91,7 @@ def train_agent():
 
     tracking_edge_count = 0
     tracking_total_steps = 0
-    tracking_cpu_margins = []
+    tracking_margin_ratios = []
 
     try:
         for episode in range(1, MAX_EPISODES + 1):
@@ -119,19 +119,7 @@ def train_agent():
                     total_reward += final_reward
                     break
                 
-                        # # [插入这段 Debug 代码] ==================================
-                        # if step == 1 and episode % 50 == 0 and node_id == 5:
-                        #     print(f"\n>>> [PYTHON DEBUG Node 5] <<<")
-                        #     # 打印这一段 State 的原始 4 个数值
-                        #     raw_slice = state[base_idx : base_idx+4]
-                        #     print(f"Raw Slice (Indices {base_idx}-{base_idx+3}): {raw_slice}")
-                            
-                        #     # 打印我们认为的变量
-                        #     print(f"Read CPU_SAFE (Idx {base_idx+0}): {state[base_idx+0]}")
-                        #     print(f"Read RAM_SAFE (Idx {base_idx+1}): {state[base_idx+1]}")
-                        #     print(f"Read LEVEL    (Idx {base_idx+3}): {state[base_idx+3]}")
-                        #     print("===============================\n")
-                        # # ======================================================
+                # 专家策略衰减
                 expert_decay_steps = 10000
                 expert_prob = max(0.0, 1.0 - (episode / expert_decay_steps))
                 
@@ -139,54 +127,45 @@ def train_agent():
                 use_expert = np.random.rand() < expert_prob
 
                 if use_expert:
-                    valid_edge_candidates = []
                     weighted_candidates = []
                     valid_cloud_candidates = []  
                     debug_logs = [] 
-                    
                     
                     # --- 专家打分循环 ---
                     for node_id in range(ACTION_DIM):
                         if not mask[node_id]: continue
 
-                        # [关键修改 1] 步长改为 7 (匹配 Java 端 7 个特征)
-                        base_idx = node_id * 7
-                        if base_idx + 6 >= len(state): continue
+                        # 步长改为 3 
+                        base_idx = node_id * 3
+                        if base_idx + 2 >= len(state): continue
                         
-                        # [关键修改 2] 读取所有特征
-                        # Java顺序: [cpuMar, ramMar, cpuCap, ramCap, level, util, count]
-                        cpu_margin = state[base_idx + 0] 
-                        ram_margin = state[base_idx + 1]
-                        cpu_capacity = state[base_idx + 2] 
-                        ram_capacity = state[base_idx + 3]
-                        level      = state[base_idx + 4]
-                        curr_util  = state[base_idx + 5] # 当前利用率
-                        dep_count  = state[base_idx + 6] # 部署计数
+                        # 读取特征 [Load, Link, Margin]
+                        load_pressure = state[base_idx + 0] 
+                        link_cost     = state[base_idx + 1] 
+                        margin_ratio  = state[base_idx + 2] 
 
-                        # 资源判断 (保持与 Java Mask 一致)
-                        is_resource_enough = (cpu_margin >= -0.05) and (ram_margin >= -0.05)
+                        # 判断节点类型 (Cloud 的 linkCost 通常是 1.0)
+                        is_cloud = (link_cost > 0.9)
 
-                        if is_resource_enough:
-                            if level > 0.5: # Edge
-                                # === [智能专家策略：能效 + 负载 + 亲和] ===
-                                # 优先选小容量节点(cpu_capacity小)，把大节点留给大任务，且小节点省电。
-                                score_efficiency = (1.0 - cpu_capacity) * 0.5 
-                                # 优先选空闲节点(curr_util小)
-                                score_lb = (1.0 - curr_util) * 0.3
-                                # 优先选已有服务的节点(dep_count大)，提高局部性
-                                score_collo = dep_count * 0.3
+                        if not is_cloud: # Edge
+                            # 1. 距离优先 (Locality): 权重 0.5
+                            # 2. 负载均衡 (Load): 权重 0.3
+                            # 3. 资源余量 (Margin): 权重 0.2
+                            
+                            score = (1.0 - link_cost) * 0.5 + \
+                                    (1.0 - load_pressure) * 0.3 + \
+                                    (margin_ratio) * 0.2
+                            
+                            weighted_candidates.append((node_id, score))
+                            
+                            # 日志记录
+                            if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                debug_logs.append(f"E{node_id}(Ld:{load_pressure:.1f}|Lk:{link_cost:.1f}|Sc:{score:.2f})")
                                 
-                                final_score = score_efficiency + score_lb + score_collo
-                                weighted_candidates.append((node_id, final_score))
-                                
-                                # 日志记录
-                                if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
-                                    debug_logs.append(f"E{node_id}(Eff:{score_efficiency:.2f}|Sc:{final_score:.2f})")
-                                    
-                            elif level < 0.2: # Cloud
-                                valid_cloud_candidates.append(node_id)
-                                if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
-                                    debug_logs.append(f"C{node_id}")
+                        else: # Cloud
+                            valid_cloud_candidates.append(node_id)
+                            if step == 1 and episode % 50 == 0 and len(debug_logs) < 5:
+                                debug_logs.append(f"C{node_id}")
 
                     # [调试打印] 
                     if step == 1 and episode % 50 == 0:
@@ -198,7 +177,7 @@ def train_agent():
                     if len(weighted_candidates) > 0:
                         # 按分数排序
                         weighted_candidates.sort(key=lambda x: x[1], reverse=True)
-                        # 从前 50% 的好节点里随机选 (保证多样性)
+                        # 从前 50% 的好节点里随机选
                         top_k = max(1, len(weighted_candidates) // 2)
                         choice_idx = np.random.randint(top_k)
                         forced_action = weighted_candidates[choice_idx][0]
@@ -212,33 +191,32 @@ def train_agent():
                 if forced_action != -1:
                     action = forced_action
                 elif episode < START_TRAIN_EPISODE:
-                    # 随机填充时，也要遵守 Mask，且尽量避开 Padding
                     valid_indices = np.where(mask)[0]
                     if len(valid_indices) > 0:
                         action = np.random.choice(valid_indices)
                     else:
-                        action = 0 # 兜底 Cloud
+                        action = 0 
                 else:
-                    # 正常的 RL 策略 (Epsilon-Greedy)
                     action = agent.select_action(state, mask, explore=True)
-                 # === 调用监控器记录数据 ===
+                
+                # --- 记录数据 ---
                 resource_monitor.record(state, action, mask)
                 load_monitor.update(action)
-                # 记录当前步的决策数据
-                tracking_total_steps += 1
-                base_idx = action * 7  # 确保这里系数是 5
                 
-                # 安全检查防止越界
-                if base_idx + 6 < len(state):
-                    # Index 0 是 CPU Margin, Index 4 是 Level
-                    cpu_margin = state[base_idx + 0]
-                    level = state[base_idx + 4]
+                tracking_total_steps += 1
+                base_idx = action * 3 
+                
+                if base_idx + 2 < len(state):
+                    link_cost = state[base_idx + 1]
+                    margin_ratio = state[base_idx + 2]
                     
-                    if level > 0.5: # 判定为边缘节点
+                    # 判定为边缘节点: LinkCost < 0.9 (Cloud=1.0)
+                    if link_cost < 0.9: 
                         tracking_edge_count += 1
                     
-                    tracking_cpu_margins.append(cpu_margin)
-                # 执行动作
+                    tracking_margin_ratios.append(margin_ratio)
+
+                # Env Step
                 next_state, next_mask, reward, done, next_info = env.step(action)
 
                 if next_state is None or next_mask is None:
@@ -278,15 +256,16 @@ def train_agent():
                 if step > (ACTION_DIM * 5): 
                     break
         
+            # --- 周期统计 ---
             if episode % 100 == 0:
                 resource_monitor.print_summary(episode)
-                # 重置监控器
+                stats = load_monitor.get_load_distribution_stats()
+                print(f"负载均衡 - 基尼系数: {stats['gini']:.3f}, 方差: {stats['variance']:.6f}")
+                
+                # 重置监控
                 resource_monitor = ResourceMonitor()
-            if episode % 100 == 0:
-                gini = load_monitor.get_gini_coefficient()
-                variance = load_monitor.get_utilization_variance()
-                print(f"负载均衡指标 - 基尼系数: {gini:.3f}, 方差: {variance:.3f}")
-                load_monitor = LoadBalanceMonitor(ACTION_DIM)  # 重置
+                load_monitor = LoadBalanceMonitor(ACTION_DIM)
+                
             agent.decay_epsilon()
             agent.update_target_network_episode(episode)
             
@@ -297,19 +276,16 @@ def train_agent():
             history_losses.append(avg_loss)
             history_q_values.append(avg_q)
 
-            episode_duration = time.time() - episode_start_time
+            # 实时进度
             if episode % 10 == 0:
-                # 计算并打印统计信息
                 edge_rate = tracking_edge_count / tracking_total_steps if tracking_total_steps > 0 else 0
-                avg_margin = np.mean(tracking_cpu_margins) if tracking_cpu_margins else 0
+                avg_margin = np.mean(tracking_margin_ratios) if tracking_margin_ratios else 0
                 
-                # 修改原有的 print，或者在下面加一行
-                print(f"Ep {episode}: Reward={total_reward:.2f} ... [Edge率={edge_rate:.1%} | AvgMargin={avg_margin:.3f}]")
+                print(f"Ep {episode}: Reward={total_reward:.2f} ... [Edge率={edge_rate:.1%} | AvgMarginRatio={avg_margin:.3f}]")
 
-                # 打印完必须重置，为下一个 10 轮做准备
                 tracking_edge_count = 0
                 tracking_total_steps = 0
-                tracking_cpu_margins = []
+                tracking_margin_ratios = []
 
             if episode % MODEL_SAVE_FREQ == 0:
                 agent.save_model(filepath=exp_manager.model_file)
@@ -328,59 +304,66 @@ def train_agent():
         
         print("Generating convergence plots...")
         exp_manager.plot_results(history_rewards, history_losses, history_q_values)
-        
         try:
             env.stop_server()
         except:
             pass
+
 class LoadBalanceMonitor:
     def __init__(self, num_nodes):
         self.node_loads = np.zeros(num_nodes)
         self.decision_count = 0
     
     def update(self, action):
+        """更新负载统计"""
         self.node_loads[action] += 1
         self.decision_count += 1
     
-    def get_gini_coefficient(self):
-        """计算基尼系数（负载不均衡度）"""
+    def get_load_distribution_stats(self):
+        """获取负载分布统计"""
         if self.decision_count == 0:
-            return 0
-        loads = self.node_loads / self.decision_count
-        loads = np.sort(loads)
-        n = len(loads)
+            return {'gini': 0, 'variance': 0}
+        
+        probabilities = self.node_loads / self.decision_count
+        active_probs = probabilities[probabilities > 0]
+        
+        if len(active_probs) == 0:
+            return {'gini': 0, 'variance': 0}
+        
+        # 计算基尼系数
+        prob_sorted = np.sort(active_probs)
+        n = len(prob_sorted)
         index = np.arange(1, n + 1)
-        gini = (np.sum((2 * index - n - 1) * loads)) / (n * np.sum(loads))
-        return gini
-    
-    def get_utilization_variance(self):
-        """计算负载方差"""
-        loads = self.node_loads / self.decision_count if self.decision_count > 0 else self.node_loads
-        return np.var(loads)
+        numerator = np.sum((2 * index - n - 1) * prob_sorted)
+        denominator = n * np.sum(prob_sorted)
+        gini = numerator / denominator if denominator != 0 else 0
+        
+        return {
+            'gini': gini,
+            'variance': np.var(active_probs)
+        }
+
 class ResourceMonitor:
     def __init__(self):
-        self.cpu_margins = []
-        self.ram_margins = []
-        self.decisions = []  # 0=云, 1=边缘
+        self.margins = []
+        self.edge_decisions = [] 
     
     def record(self, state, action, mask):
-        """记录节点资源余量和决策"""
-        base_idx = action * 7
-        if base_idx + 6 < len(state):
-            cpu_margin = state[base_idx]
-            ram_margin = state[base_idx + 1]
-            level = state[base_idx + 4]
+        """记录资源余量和决策"""
+        base_idx = action * 3 
+        if base_idx + 2 < len(state):
+            link_cost = state[base_idx + 1]
+            margin_ratio = state[base_idx + 2]
             
-            self.cpu_margins.append(cpu_margin)
-            self.ram_margins.append(ram_margin)
-            self.decisions.append(1 if level > 0.5 else 0)
+            self.margins.append(margin_ratio)
+            # LinkCost < 0.9 认为是 Edge
+            self.edge_decisions.append(1 if link_cost < 0.9 else 0)
     
     def print_summary(self, episode):
-        if self.cpu_margins:
-            avg_cpu = np.mean(self.cpu_margins)
-            avg_ram = np.mean(self.ram_margins)
-            edge_ratio = np.mean(self.decisions)
-            print(f"Ep{episode} 资源余量: CPU={avg_cpu:.3f}, RAM={avg_ram:.3f}, 边缘选择率={edge_ratio:.1%}")
+        if self.margins:
+            avg_margin = np.mean(self.margins)
+            edge_ratio = np.mean(self.edge_decisions)
+            print(f"Ep{episode} 统计: AvgMarginRatio={avg_margin:.3f}, 边缘选择率={edge_ratio:.1%}")
 
 if __name__ == "__main__":
     print("PaddlePaddle using device:", paddle.get_device())
