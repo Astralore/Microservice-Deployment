@@ -1,72 +1,175 @@
 [
   {
-    "appId": "A0", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A0", "userId": 1, "deadline": 2000,
+    "//comment": "Type: Heavy Video Processing (High CPU)",
+    "microservices": [
+      { "name": "video_ingest", "mips": 1500, "ram": 1024, "bw_in": 4000, "bw_out": 4000 },
+      { "name": "obj_detect",   "mips": 4500, "ram": 2048, "bw_in": 4000, "bw_out": 1000 },
+      { "name": "alert_gen",    "mips": 1000, "ram": 512,  "bw_in": 1000, "bw_out": 200 }
+    ]
   },
   {
-    "appId": "A1", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A1", "userId": 1, "deadline": 1500,
+    "//comment": "Type: Face Recognition (Burst CPU)",
+    "microservices": [
+      { "name": "frame_extract", "mips": 2000, "ram": 1024, "bw_in": 3000, "bw_out": 2000 },
+      { "name": "face_match",    "mips": 3500, "ram": 2048, "bw_in": 2000, "bw_out": 500 }
+    ]
   },
   {
-    "appId": "A2", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A2", "userId": 1, "deadline": 3000,
+    "//comment": "Type: Complex ETL Pipeline (Long Chain)",
+    "microservices": [
+      { "name": "raw_data",    "mips": 800,  "ram": 256, "bw_in": 1000, "bw_out": 1000 },
+      { "name": "filter",      "mips": 1000, "ram": 512, "bw_in": 1000, "bw_out": 800 },
+      { "name": "transform",   "mips": 1200, "ram": 512, "bw_in": 800,  "bw_out": 800 },
+      { "name": "aggregate",   "mips": 1500, "ram": 1024, "bw_in": 800,  "bw_out": 200 },
+      { "name": "store",       "mips": 500,  "ram": 256,  "bw_in": 200,  "bw_out": 50 }
+    ]
   },
   {
-    "appId": "A3", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A3", "userId": 1, "deadline": 1000,
+    "//comment": "Type: Industrial Control (Low Latency, Light)",
+    "microservices": [
+      { "name": "sensor_read", "mips": 500, "ram": 128, "bw_in": 200, "bw_out": 200 },
+      { "name": "pid_calc",    "mips": 800, "ram": 128, "bw_in": 200, "bw_out": 200 },
+      { "name": "actuator_cmd","mips": 400, "ram": 64,  "bw_in": 200, "bw_out": 50 }
+    ]
   },
   {
-    "appId": "A4", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A4", "userId": 1, "deadline": 2500,
+    "//comment": "Type: Audio Analysis",
+    "microservices": [
+      { "name": "noise_cancel", "mips": 1200, "ram": 512, "bw_in": 1000, "bw_out": 1000 },
+      { "name": "fft_process",  "mips": 2500, "ram": 1024, "bw_in": 1000, "bw_out": 500 },
+      { "name": "keyword_spot", "mips": 1500, "ram": 512,  "bw_in": 500,  "bw_out": 100 }
+    ]
   },
   {
-    "appId": "A5", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A5", "userId": 1, "deadline": 2000,
+    "//comment": "Type: VR Rendering Assist (High Bandwidth)",
+    "microservices": [
+      { "name": "pose_track",   "mips": 1500, "ram": 512,  "bw_in": 200,  "bw_out": 200 },
+      { "name": "render_help",  "mips": 4000, "ram": 4096, "bw_in": 500,  "bw_out": 5000 }
+    ]
   },
   {
-    "appId": "A6", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A6", "userId": 1, "deadline": 1200,
+    "//comment": "Type: Smart Traffic Light",
+    "microservices": [
+      { "name": "car_count",    "mips": 2000, "ram": 1024, "bw_in": 2000, "bw_out": 500 },
+      { "name": "light_ctrl",   "mips": 600,  "ram": 256,  "bw_in": 500,  "bw_out": 100 }
+    ]
   },
   {
-    "appId": "A7", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A7", "userId": 1, "deadline": 5000,
+    "//comment": "Type: Log Analysis (Background Job)",
+    "microservices": [
+      { "name": "log_collect",  "mips": 300, "ram": 128, "bw_in": 500, "bw_out": 500 },
+      { "name": "compressor",   "mips": 2000,"ram": 512, "bw_in": 500, "bw_out": 100 },
+      { "name": "encryptor",    "mips": 1500,"ram": 512, "bw_in": 100, "bw_out": 100 }
+    ]
   },
   {
-    "appId": "A8", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A8", "userId": 1, "deadline": 1800,
+    "//comment": "Type: Health Monitor (Critical)",
+    "microservices": [
+      { "name": "vitals_proc",  "mips": 1000, "ram": 256, "bw_in": 200, "bw_out": 200 },
+      { "name": "anomaly_det",  "mips": 2000, "ram": 512, "bw_in": 200, "bw_out": 100 }
+    ]
   },
   {
-    "appId": "A9", "userId": 1, "throughput": 100, "nwLength": 2000.0,
-    "client_mips": 500, "client_ram": 128, "cpu_c_m1": 1500.0, "nw_c_m1": 1000.0,
-    "mService1_mips": 1000, "mService1_ram": 512, "cpu_m1_m2": 2000.0, "nw_m1_m2": 1000.0,
-    "mService2_mips": 1500, "mService2_ram": 1024, "cpu_m2_m3": 2500.0, "nw_m2_m3": 800.0,
-    "mService3_mips": 1000, "mService3_ram": 512, "cpu_m3_c": 1500.0, "nw_m3_c": 500.0
+    "appId": "A9", "userId": 1, "deadline": 2200,
+    "//comment": "Type: Standard Web App",
+    "microservices": [
+      { "name": "gateway",      "mips": 800,  "ram": 512,  "bw_in": 1000, "bw_out": 1000 },
+      { "name": "auth_svc",     "mips": 1200, "ram": 512,  "bw_in": 500,  "bw_out": 500 },
+      { "name": "biz_logic",    "mips": 2000, "ram": 1024, "bw_in": 500,  "bw_out": 500 },
+      { "name": "db_proxy",     "mips": 1000, "ram": 1024, "bw_in": 500,  "bw_out": 200 }
+    ]
+  },
+  {
+    "appId": "A10", "userId": 1, "deadline": 2000,
+    "//comment": "Type: AR Overlay",
+    "microservices": [
+      { "name": "feature_map",  "mips": 3000, "ram": 2048, "bw_in": 3000, "bw_out": 1000 },
+      { "name": "object_overlay", "mips": 2500, "ram": 1024, "bw_in": 1000, "bw_out": 3000 }
+    ]
+  },
+  {
+    "appId": "A11", "userId": 1, "deadline": 1500,
+    "//comment": "Type: Environmental Sensing (Light)",
+    "microservices": [
+      { "name": "air_quality",  "mips": 400, "ram": 64, "bw_in": 100, "bw_out": 100 },
+      { "name": "uploader",     "mips": 300, "ram": 64, "bw_in": 100, "bw_out": 50 }
+    ]
+  },
+  {
+    "appId": "A12", "userId": 1, "deadline": 2500,
+    "//comment": "Type: Fleet Management",
+    "microservices": [
+      { "name": "gps_tracker",  "mips": 800,  "ram": 256, "bw_in": 200, "bw_out": 200 },
+      { "name": "route_opt",    "mips": 3500, "ram": 1024,"bw_in": 200, "bw_out": 200 }
+    ]
+  },
+  {
+    "appId": "A13", "userId": 1, "deadline": 3000,
+    "//comment": "Type: Distributed Cache Node",
+    "microservices": [
+      { "name": "cache_ingest", "mips": 1000, "ram": 2048, "bw_in": 2000, "bw_out": 2000 },
+      { "name": "hash_calc",    "mips": 1500, "ram": 512,  "bw_in": 2000, "bw_out": 500 }
+    ]
+  },
+  {
+    "appId": "A14", "userId": 1, "deadline": 2000,
+    "//comment": "Type: Smart Grid Meter",
+    "microservices": [
+      { "name": "meter_read",   "mips": 500, "ram": 128, "bw_in": 100, "bw_out": 100 },
+      { "name": "fraud_check",  "mips": 2000,"ram": 512, "bw_in": 100, "bw_out": 50 },
+      { "name": "billing",      "mips": 800, "ram": 256, "bw_in": 50,  "bw_out": 50 }
+    ]
+  },
+  {
+    "appId": "A15", "userId": 1, "deadline": 1800,
+    "//comment": "Type: Drone Control (High Priority)",
+    "microservices": [
+      { "name": "stab_ctrl",    "mips": 1200, "ram": 256, "bw_in": 500, "bw_out": 500 },
+      { "name": "path_plan",    "mips": 3000, "ram": 1024,"bw_in": 500, "bw_out": 200 },
+      { "name": "collision",    "mips": 2500, "ram": 512, "bw_in": 500, "bw_out": 100 }
+    ]
+  },
+  {
+    "appId": "A16", "userId": 1, "deadline": 2200,
+    "//comment": "Type: Retail Analytics",
+    "microservices": [
+      { "name": "heatmap",      "mips": 2000, "ram": 1024, "bw_in": 2000, "bw_out": 500 },
+      { "name": "dwell_time",   "mips": 1500, "ram": 512,  "bw_in": 500,  "bw_out": 200 }
+    ]
+  },
+  {
+    "appId": "A17", "userId": 1, "deadline": 3000,
+    "//comment": "Type: Voice Assistant",
+    "microservices": [
+      { "name": "wakeword",     "mips": 800,  "ram": 256, "bw_in": 200, "bw_out": 200 },
+      { "name": "stt",          "mips": 3500, "ram": 2048,"bw_in": 200, "bw_out": 500 },
+      { "name": "nlp",          "mips": 2500, "ram": 1024,"bw_in": 500, "bw_out": 500 },
+      { "name": "tts",          "mips": 2000, "ram": 1024,"bw_in": 500, "bw_out": 2000 }
+    ]
+  },
+  {
+    "appId": "A18", "userId": 1, "deadline": 1500,
+    "//comment": "Type: Predictive Maint",
+    "microservices": [
+      { "name": "vibration",    "mips": 1000, "ram": 256, "bw_in": 500, "bw_out": 500 },
+      { "name": "fft_fast",     "mips": 1500, "ram": 512, "bw_in": 500, "bw_out": 200 },
+      { "name": "model_infer",  "mips": 2500, "ram": 1024,"bw_in": 200, "bw_out": 50 }
+    ]
+  },
+  {
+    "appId": "A19", "userId": 1, "deadline": 4000,
+    "//comment": "Type: Batch Processor (Low Priority)",
+    "microservices": [
+      { "name": "batch_job",    "mips": 4000, "ram": 2048,"bw_in": 5000, "bw_out": 100 }
+    ]
   }
 ]

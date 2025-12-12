@@ -385,9 +385,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
 
         // 3. 节点状态列表
         sb.append("Nodes Status (Top 15 relevant):\n");
-        int count = 0;
         for (FogDevice node : deployableNodes) {
-            if (count > 15) break;
 
             // CPU 信息
             double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
@@ -407,7 +405,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             // [优化] 输出格式包含 RAM
             sb.append(String.format("- ID %d (%s): Free CPU %.0f/%.0f, Free RAM %d/%d.\n",
                     node.getId(), type, freeMips, totalMips, freeRam, totalRam));
-            count++;
         }
         return sb.toString();
     }

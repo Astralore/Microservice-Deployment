@@ -44,28 +44,50 @@ class ExperimentManager:
     def save_llm_data(self, description, action, reward, instruction_type="Edge_Optimization"):
         """
         保存微调数据，支持不同的指令类型。
+        格式化为 CoT (Chain-of-Thought) 风格，引导 LLM 输出候选列表。
         """
-        # 根据类型生成不同的 System Prompt
+        # 1. 根据场景构造 System Prompt (包含逻辑链)
         if instruction_type == "Cloud_Fallback":
-            # 云端场景：强调资源紧缺时的兜底策略
-            instruction = "You are a robust system scheduler. The edge layer is currently overloaded or lacks resources for this task. Identify the appropriate fallback strategy (Cloud) to ensure service availability."
+            # 场景 A: 边缘资源耗尽，被迫去云端 (保底策略)
+            # 引导 LLM 学会：当边缘不可用时，果断选择云端，不要纠结延迟
+            instruction = (
+                "Role: Robustness Scheduler.\n"
+                "Task: The edge layer is critically overloaded or lacks resources. Identify the appropriate Cloud node ID to ensure service availability.\n"
+                "Constraint: Ignore latency penalties, prioritize successful deployment over failure.\n"
+                "Output: A JSON list containing the valid Cloud node ID (e.g., [2])."
+            )
         else:
-            # 边缘场景：强调性能优化
-            instruction = "You are an intelligent scheduler for edge computing. Select the optimal edge node to minimize latency and balance load."
+            # 场景 B: 边缘优化 (核心策略)
+            # 引导 LLM 学会：资源过滤 -> 亲和性排序 -> 负载均衡 的三步走逻辑
+            instruction = (
+                "Role: Intelligent Edge Scheduler.\n"
+                "Task: Analyze the system state and select a list of optimal Edge Node IDs for the microservice.\n"
+                "Logic Chain:\n"
+                "1. FILTER: Exclude nodes where Free CPU < Req MIPS or Free RAM < Req RAM.\n"
+                "2. RANK: Prioritize nodes that match the 'Data Source' location (Predecessor) to minimize latency.\n"
+                "3. BALANCE: Avoid nodes that are nearly full (>90% load) to prevent congestion.\n"
+                "Output: A JSON list of the top valid node IDs (e.g., [id1, id2])."
+            )
+
+        # 2. 构造 Output
+        output_str = json.dumps([int(action)])
 
         entry = {
             "instruction": instruction,
             "input": description,
-            "output": str(action),
+            "output": output_str, 
             "reward": round(reward, 2),
-            "type": instruction_type  # 额外记录类型，方便后续筛选
+            "type": instruction_type 
         }
+
         try:
+            # 使用 'a' 模式追加写入 .jsonl 文件
             with open(self.dataset_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             print(f"Error saving dataset: {e}")
 
+    
     def plot_results(self, rewards, losses, q_values):
         plt.figure(figsize=(15, 10))
         plt.subplot(3, 1, 1)
@@ -279,8 +301,7 @@ def train_agent():
                             instruction_type = "Cloud_Fallback"
                     else:
                         # [策略 B] 边缘优化：标准严格
-                        # 我们只希望 LLM 学习那些低延迟(+20)、低负载的优质边缘部署
-                        # 30分通常意味着：Base(50) + Link(-10或+10) - LoadPenalty(如果有)
+                        # LLM 学习那些低延迟(+20)、低负载的优质边缘部署
                         # 设置 > 30 可以过滤掉严重过载或链路极差的边缘节点
                         if reward > 30.0:
                             should_save = True
