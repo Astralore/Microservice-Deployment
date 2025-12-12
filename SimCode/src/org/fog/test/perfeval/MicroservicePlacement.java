@@ -82,7 +82,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:/Code/Microservice_Deployment/SimCode/src/org/fog/test/perfeval/ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:\\Code\\Microservice-Deployment\\SimCode\\src\\org\\fog\\test\\perfeval\\ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
@@ -118,7 +118,7 @@ public class MicroservicePlacement {
                 int clientNodeId = clientNode.getId();
 
                 System.out.println("Deploying " + currentAppId + " Client to " + clientNode.getName());
-                createSensorAndActuator(currentAppId, userId, clientNodeId);
+                createSensorAndActuator(currentAppId, userId, clientNodeId, app);
 
                 Map<String, Integer> placedMap = new HashMap<>();
                 placedMap.put("client", clientNodeId);
@@ -136,7 +136,33 @@ public class MicroservicePlacement {
             );
 
             controller.submitPlacementRequests(placementRequests, 0);
+            // =================================================================
+            System.out.println("DEBUG: >>>>>> EXECUTING MANUAL APP BINDING... <<<<<<");
+            int bindCount = 0;
 
+            // 遍历所有传感器
+            for (Sensor s : sensors) {
+                // 遍历所有应用，寻找匹配的 AppID
+                for (Application app : applications) {
+                    if (s.getAppId().equals(app.getAppId())) {
+                        s.setApp(app); // <--- 关键！这就是修复 NPE 的核心
+                        bindCount++;
+                        break;
+                    }
+                }
+            }
+
+            // 遍历所有执行器 (防止 Actuator 也报空指针)
+            for (Actuator a : actuators) {
+                for (Application app : applications) {
+                    if (a.getAppId().equals(app.getAppId())) {
+                        a.setApp(app);
+                        break;
+                    }
+                }
+            }
+            System.out.println("DEBUG: >>>>>> SUCCESS! Bound " + bindCount + " sensors. <<<<<<");
+            // =================================================================
             TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
             CloudSim.startSimulation();
             CloudSim.stopSimulation();
@@ -277,15 +303,37 @@ public class MicroservicePlacement {
     }
 
     // ... (createFogDevices 等方法请保持您原来的实现) ...
-    private static void createSensorAndActuator(String appId, int userId, int parentDeviceId) {
-        Sensor sensor = new Sensor("s-" + appId, "sensor_data", userId, appId, new DeterministicDistribution(5));
+//    private static void createSensorAndActuator(String appId, int userId, int parentDeviceId) {
+//        Sensor sensor = new Sensor("s-" + appId, "sensor_data", userId, appId, new DeterministicDistribution(5));
+//        sensor.setGatewayDeviceId(parentDeviceId);
+//        sensor.setLatency(endDeviceToEdgeNodeLatency);
+//        sensors.add(sensor);
+//
+//        Actuator actuator = new Actuator("a-" + appId, userId, appId, "actuator");
+//        actuator.setGatewayDeviceId(parentDeviceId);
+//        actuator.setLatency(endDeviceToEdgeNodeLatency);
+//        actuators.add(actuator);
+//    }
+    private static void createSensorAndActuator(String appId, int userId, int parentDeviceId, Application app) {
+        // 1. 创建 Sensor
+        // [修复] TupleType 从 "sensor_data" 改为 "sensor"，以匹配 AppEdge 的 Source Name
+        Sensor sensor = new Sensor("s-" + appId, "sensor", userId, appId, new DeterministicDistribution(5));
         sensor.setGatewayDeviceId(parentDeviceId);
         sensor.setLatency(endDeviceToEdgeNodeLatency);
+
+        // 绑定 App (保持之前的修复)
+        sensor.setApp(app);
+
         sensors.add(sensor);
 
+        // 2. 创建 Actuator
         Actuator actuator = new Actuator("a-" + appId, userId, appId, "actuator");
         actuator.setGatewayDeviceId(parentDeviceId);
         actuator.setLatency(endDeviceToEdgeNodeLatency);
+
+        // 绑定 App (保持之前的修复)
+        actuator.setApp(app);
+
         actuators.add(actuator);
     }
 
@@ -298,7 +346,7 @@ public class MicroservicePlacement {
         fogDevices.add(cloud);
 
         for (int i = 0; i < edgeGateways; i++) {
-            FogDevice gateway = createFogDeviceHelper("gateway-" + i, 2800, 4000, 10000, 10000, 1, 0.0, 107, 83, MicroserviceFogDevice.FON);
+            FogDevice gateway = createFogDeviceHelper("gateway-" + i, 2800, 4000, 10000, 10000, 1, 0.0, 107, 83, MicroserviceFogDevice.FCN);
             gateway.setParentId(cloud.getId());
             gateway.setUplinkLatency(edgeToCloudLatency);
             gateway.setLevel(1);

@@ -27,20 +27,44 @@ class ExperimentManager:
         self.model_file = os.path.join(self.exp_dir, 'dueling_dqn_model.pdparams')
         self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
-    def save_llm_data(self, description, action, reward):
-        # 记录高质量的决策数据
-        if reward > 35.0 and description:
-            entry = {
-                "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with low latency and balanced load.",
-                "input": description,
-                "output": str(action),
-                "reward": round(reward, 2)
-            }
-            try:
-                with open(self.dataset_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            except Exception as e:
-                print(f"Error saving dataset: {e}")
+    # def save_llm_data(self, description, action, reward):
+    #     # 记录高质量的决策数据
+    #     if reward > 35.0 and description:
+    #         entry = {
+    #             "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with low latency and balanced load.",
+    #             "input": description,
+    #             "output": str(action),
+    #             "reward": round(reward, 2)
+    #         }
+    #         try:
+    #             with open(self.dataset_file, "a", encoding="utf-8") as f:
+    #                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    #         except Exception as e:
+    #             print(f"Error saving dataset: {e}")
+    def save_llm_data(self, description, action, reward, instruction_type="Edge_Optimization"):
+        """
+        保存微调数据，支持不同的指令类型。
+        """
+        # 根据类型生成不同的 System Prompt
+        if instruction_type == "Cloud_Fallback":
+            # 云端场景：强调资源紧缺时的兜底策略
+            instruction = "You are a robust system scheduler. The edge layer is currently overloaded or lacks resources for this task. Identify the appropriate fallback strategy (Cloud) to ensure service availability."
+        else:
+            # 边缘场景：强调性能优化
+            instruction = "You are an intelligent scheduler for edge computing. Select the optimal edge node to minimize latency and balance load."
+
+        entry = {
+            "instruction": instruction,
+            "input": description,
+            "output": str(action),
+            "reward": round(reward, 2),
+            "type": instruction_type  # 额外记录类型，方便后续筛选
+        }
+        try:
+            with open(self.dataset_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"Error saving dataset: {e}")
 
     def plot_results(self, rewards, losses, q_values):
         plt.figure(figsize=(15, 10))
@@ -231,6 +255,40 @@ def train_agent():
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
+                if episode >= START_TRAIN_EPISODE and current_desc:
+                    # 1. 判断当前 Action 是否为云端节点
+                    # 根据 Java 端特征定义：Feature 2 (Index 1) 是 LinkCost。Cloud 的 LinkCost 通常为 1.0 (或 > 0.9)
+                    base_idx = action * 3
+                    is_cloud_action = False
+                    
+                    # 确保索引不越界
+                    if base_idx + 1 < len(state):
+                        link_cost = state[base_idx + 1]
+                        if link_cost > 0.9:
+                            is_cloud_action = True
+                    
+                    # 2. 应用双重阈值
+                    should_save = False
+                    instruction_type = "Edge_Optimization"
+
+                    if is_cloud_action:
+                        # [策略 A] 云端兜底：标准放宽
+                        # 只要不是失败(-50)，哪怕是 -5 分（正常云端分），也是正确的兜底决策
+                        if reward > -10.0:
+                            should_save = True
+                            instruction_type = "Cloud_Fallback"
+                    else:
+                        # [策略 B] 边缘优化：标准严格
+                        # 我们只希望 LLM 学习那些低延迟(+20)、低负载的优质边缘部署
+                        # 30分通常意味着：Base(50) + Link(-10或+10) - LoadPenalty(如果有)
+                        # 设置 > 30 可以过滤掉严重过载或链路极差的边缘节点
+                        if reward > 30.0:
+                            should_save = True
+                            instruction_type = "Edge_Optimization"
+                    
+                    # 3. 执行保存
+                    if should_save:
+                        exp_manager.save_llm_data(current_desc, action, reward, instruction_type)
 
                 # 保存微调数据
                 if episode >= START_TRAIN_EPISODE and current_desc:

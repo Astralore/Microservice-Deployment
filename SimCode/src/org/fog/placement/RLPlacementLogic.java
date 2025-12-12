@@ -602,7 +602,7 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
             FogDevice dev = fogDeviceMap.get(entry.getKey());
             if (dev != null) {
                 double realUsedMips = currentCpuLoad.getOrDefault(entry.getKey(), 0.0);
-                double estimatedUtil = (entry.getValue() * realUsedMips) / dev.getHost().getTotalMips();
+                double estimatedUtil = realUsedMips / dev.getHost().getTotalMips();
                 String warning = estimatedUtil > 0.8 ? "⚠过载" : "✓正常";
                 System.out.printf("%6d | %10d | %s (预计利用率: %.1f%%)\n",
                         entry.getKey(), entry.getValue(), warning, estimatedUtil * 100);

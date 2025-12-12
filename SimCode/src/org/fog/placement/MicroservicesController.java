@@ -176,23 +176,51 @@ public class MicroservicesController extends SimEntity {
         }
     }
 
-    protected void initiatePlacementRequestProcessing() {
-        for (PlacementRequest p : placementRequestDelayMap.keySet()) {
-            processPlacedModules(p);
-            int fonId = ((MicroserviceFogDevice) getFogDeviceById(p.getGatewayDeviceId())).getFonId();
-            if (placementRequestDelayMap.get(p) == 0) {
-                sendNow(fonId, FogEvents.RECEIVE_PR, p);
-            } else
-                send(getId(), placementRequestDelayMap.get(p), FogEvents.TRANSMIT_PR, p);
+//    protected void initiatePlacementRequestProcessing() {
+//        for (PlacementRequest p : placementRequestDelayMap.keySet()) {
+//            processPlacedModules(p);
+//            int fonId = ((MicroserviceFogDevice) getFogDeviceById(p.getGatewayDeviceId())).getFonId();
+//            if (placementRequestDelayMap.get(p) == 0) {
+//                sendNow(fonId, FogEvents.RECEIVE_PR, p);
+//            } else
+//                send(getId(), placementRequestDelayMap.get(p), FogEvents.TRANSMIT_PR, p);
+//        }
+//        if (MicroservicePlacementConfig.PR_PROCESSING_MODE == MicroservicePlacementConfig.PERIODIC) {
+//            for (FogDevice f : fogDevices) {
+//                if (((MicroserviceFogDevice) f).getDeviceType() == MicroserviceFogDevice.FON) {
+//                    sendNow(f.getId(), FogEvents.PROCESS_PRS);
+//                }
+//            }
+//        }
+//    }
+protected void initiatePlacementRequestProcessing() {
+    // [关键修改] 获取 Cloud 节点 (它是唯一的 FON/管理者)
+    FogDevice cloud = getCloud();
+    int cloudId = cloud.getId();
+
+    System.out.println("DEBUG: Routing ALL " + placementRequestDelayMap.size() + " requests to Central Cloud (ID: " + cloudId + ")");
+
+    for (PlacementRequest p : placementRequestDelayMap.keySet()) {
+        processPlacedModules(p);
+
+        // [关键修改] 不管 Sensor 在哪，请求一律发给 Cloud
+        // 之前的代码是发给 getGatewayDeviceId()，现在必须改掉！
+        if (placementRequestDelayMap.get(p) == 0) {
+            sendNow(cloudId, FogEvents.RECEIVE_PR, p);
+        } else {
+            send(cloudId, placementRequestDelayMap.get(p), FogEvents.TRANSMIT_PR, p);
         }
-        if (MicroservicePlacementConfig.PR_PROCESSING_MODE == MicroservicePlacementConfig.PERIODIC) {
-            for (FogDevice f : fogDevices) {
-                if (((MicroserviceFogDevice) f).getDeviceType() == MicroserviceFogDevice.FON) {
-                    sendNow(f.getId(), FogEvents.PROCESS_PRS);
-                }
+    }
+
+    // 如果是周期性模式，也只通知 Cloud
+    if (MicroservicePlacementConfig.PR_PROCESSING_MODE == MicroservicePlacementConfig.PERIODIC) {
+        for (FogDevice f : fogDevices) {
+            if (f.getName().equals("cloud")) {
+                sendNow(f.getId(), FogEvents.PROCESS_PRS);
             }
         }
     }
+}
 
     protected void processPlacedModules(PlacementRequest p) {
         for (String placed : p.getPlacedMicroservices().keySet()) {
