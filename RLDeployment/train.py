@@ -23,81 +23,89 @@ class ExperimentManager:
             os.makedirs(self.exp_dir)
         print(f"=== Experiment Output Directory: {self.exp_dir} ===")
         self.log_file = os.path.join(self.exp_dir, 'rl_training_log.csv')
-        self.dataset_file = os.path.join(self.exp_dir, 'llm_finetuning_data.jsonl')
+        self.raw_data_file = os.path.join(self.exp_dir, 'raw_training_metadata.json')
         self.model_file = os.path.join(self.exp_dir, 'dueling_dqn_model.pdparams')
         self.plot_file = os.path.join(self.exp_dir, 'training_convergence.png')
 
-    # def save_llm_data(self, description, action, reward):
-    #     # 记录高质量的决策数据
-    #     if reward > 35.0 and description:
-    #         entry = {
-    #             "instruction": "You are an intelligent scheduler for edge computing. Given the system state and resource requirements, select the optimal node ID for microservice deployment. Prioritize edge nodes with low latency and balanced load.",
-    #             "input": description,
-    #             "output": str(action),
-    #             "reward": round(reward, 2)
-    #         }
-    #         try:
-    #             with open(self.dataset_file, "a", encoding="utf-8") as f:
-    #                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    #         except Exception as e:
-    #             print(f"Error saving dataset: {e}")
     # 
-    def save_llm_data(self, description, action_data, reward, instruction_type="Edge_Optimization"):
+    # def save_llm_data(self, description, action_data, reward, instruction_type="Edge_Optimization"):
+    #     """
+    #     保存微调数据，格式为 Alpaca 标准格式：
+    #     {
+    #       "instruction": "...",
+    #       "input": "...",
+    #       "output": "..."
+    #     }
+    #     action_data: 可以是单个 int，也可以是 Top-K list。
+    #     """
+    #     # 1. 确保 action_data 是 Python 列表格式
+    #     if isinstance(action_data, (int, np.integer)):
+    #         action_list = [int(action_data)]
+    #     elif isinstance(action_data, list) or isinstance(action_data, np.ndarray):
+    #         action_list = [int(x) for x in action_data]
+    #     else:
+    #         action_list = []
+
+    #     # 2. 根据类型定义 Instruction (System Prompt 融合进 instruction 或 input，LLaMA-Factory 默认 Alpaca 格式无 system 字段)
+    #     # 为了适配您的格式要求，我们将 System 的角色定义放进 instruction
+    #     if instruction_type == "Cloud_Fallback":
+    #         instruction = (
+    #             "Role: Robustness Scheduler.\n"
+    #             "Task: The edge layer is critically overloaded. Identify the Top-5 fallback nodes (Cloud/Edge) to ensure service availability.\n"
+    #             "Output: A JSON list of valid node IDs ranked by priority."
+    #         )
+    #     else:
+    #         instruction = (
+    #             "Role: Intelligent Edge Scheduler.\n"
+    #             "Task: Analyze the system state and select the Top-5 optimal Edge Node IDs for the microservice.\n"
+    #             "Logic Chain:\n"
+    #             "1. FILTER: Exclude nodes where Free CPU < Req MIPS or Free RAM < Req RAM.\n"
+    #             "2. RANK: Prioritize nodes matching 'Link: Local' or 'Link: Neighbor' to minimize latency.\n"
+    #             "3. BALANCE: Avoid nodes with >90% load.\n"
+    #             "Output: A JSON list of the top 5 node IDs (e.g., [12, 5, 3, 8, 20])."
+    #         )
+
+    #     # 3. 构造 Entry
+    #     # output 字段必须是字符串
+    #     output_str = json.dumps(action_list)
+
+    #     entry = {
+    #         "instruction": instruction,
+    #         "input": description,
+    #         "output": output_str
+    #         # "reward": reward  <-- 既然要严格对齐 Alpaca Demo 格式，这里不存 reward
+    #         # "type": instruction_type
+    #     }
+
+    #     try:
+    #         with open(self.dataset_file, "a", encoding="utf-8") as f:
+    #             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    #     except Exception as e:
+    #         print(f"Error saving dataset: {e}")
+    def save_raw_metadata(self, description, node_ids_map, q_values, mask, action, reward):
         """
-        保存微调数据，格式为 Alpaca 标准格式：
-        {
-          "instruction": "...",
-          "input": "...",
-          "output": "..."
-        }
-        action_data: 可以是单个 int，也可以是 Top-K list。
+        [高效版] 只保存元数据，不进行文本处理和排序。
+        description: Java 发来的环境描述字符串
+        node_ids_map: ID 映射表
+        q_values: RL 预测的全量 Q 值 (Numpy array)
+        mask: 有效性掩码
         """
-        # 1. 确保 action_data 是 Python 列表格式
-        if isinstance(action_data, (int, np.integer)):
-            action_list = [int(action_data)]
-        elif isinstance(action_data, list) or isinstance(action_data, np.ndarray):
-            action_list = [int(x) for x in action_data]
-        else:
-            action_list = []
-
-        # 2. 根据类型定义 Instruction (System Prompt 融合进 instruction 或 input，LLaMA-Factory 默认 Alpaca 格式无 system 字段)
-        # 为了适配您的格式要求，我们将 System 的角色定义放进 instruction
-        if instruction_type == "Cloud_Fallback":
-            instruction = (
-                "Role: Robustness Scheduler.\n"
-                "Task: The edge layer is critically overloaded. Identify the Top-5 fallback nodes (Cloud/Edge) to ensure service availability.\n"
-                "Output: A JSON list of valid node IDs ranked by priority."
-            )
-        else:
-            instruction = (
-                "Role: Intelligent Edge Scheduler.\n"
-                "Task: Analyze the system state and select the Top-5 optimal Edge Node IDs for the microservice.\n"
-                "Logic Chain:\n"
-                "1. FILTER: Exclude nodes where Free CPU < Req MIPS or Free RAM < Req RAM.\n"
-                "2. RANK: Prioritize nodes matching 'Link: Local' or 'Link: Neighbor' to minimize latency.\n"
-                "3. BALANCE: Avoid nodes with >90% load.\n"
-                "Output: A JSON list of the top 5 node IDs (e.g., [12, 5, 3, 8, 20])."
-            )
-
-        # 3. 构造 Entry
-        # output 字段必须是字符串
-        output_str = json.dumps(action_list)
-
+        # 构造轻量级 Entry
         entry = {
-            "instruction": instruction,
-            "input": description,
-            "output": output_str
-            # "reward": reward  <-- 既然要严格对齐 Alpaca Demo 格式，这里不存 reward
-            # "type": instruction_type
+            "desc": description,         # 环境 Context
+            "node_ids": node_ids_map,    # 翻译字典
+            "q_vals": q_values.tolist(), # RL 的大脑状态 (关键!)
+            "mask": mask.tolist(),       # 约束条件
+            "act": int(action),          # RL 实际选择的动作
+            "rew": round(reward, 4),     # 分数
+            "ts": time.time()            # 时间戳
         }
 
         try:
-            with open(self.dataset_file, "a", encoding="utf-8") as f:
+            with open(self.raw_data_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
-            print(f"Error saving dataset: {e}")
-
-    
+            print(f"Error saving raw data: {e}")
     def plot_results(self, rewards, losses, q_values):
         plt.figure(figsize=(15, 10))
         plt.subplot(3, 1, 1)
@@ -287,78 +295,43 @@ def train_agent():
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
-                # if episode >= START_TRAIN_EPISODE and current_desc:
-                #     # 1. 判断当前 Action 是否为云端节点
-                #     # 根据 Java 端特征定义：Feature 2 (Index 1) 是 LinkCost。Cloud 的 LinkCost 通常为 1.0 (或 > 0.9)
-                #     base_idx = action * 3
-                #     is_cloud_action = False
-                    
-                #     # 确保索引不越界
-                #     if base_idx + 1 < len(state):
-                #         link_cost = state[base_idx + 1]
-                #         if link_cost > 0.9:
-                #             is_cloud_action = True
-                    
-                #     # 2. 应用双重阈值
-                #     should_save = False
-                #     instruction_type = "Edge_Optimization"
-
-                #     if is_cloud_action:
-                #         # [策略 A] 云端兜底：标准放宽
-                #         # 只要不是失败(-50)，哪怕是 -5 分（正常云端分），也是正确的兜底决策
-                #         if reward > -10.0:
-                #             should_save = True
-                #             instruction_type = "Cloud_Fallback"
-                #     else:
-                #         # [策略 B] 边缘优化：标准严格
-                #         # LLM 学习那些低延迟(+20)、低负载的优质边缘部署
-                #         # 设置 > 30 可以过滤掉严重过载或链路极差的边缘节点
-                #         if reward > 30.0:
-                #             should_save = True
-                #             instruction_type = "Edge_Optimization"
-                    
-                #     # 3. 执行保存
-                #     if should_save:
-                #         exp_manager.save_llm_data(current_desc, action, reward, instruction_type)
-
-                # # 保存微调数据
-                # if episode >= START_TRAIN_EPISODE and current_desc:
-                #     exp_manager.save_llm_data(current_desc, action, reward)
-                # =================================================================
-                # [核心修改] Top-5 推荐数据收集逻辑 (基于 Q 值)
+               # =================================================================
+                # 极速数据收集 - 只存 Raw Metadata
                 # =================================================================
                 if episode >= START_TRAIN_EPISODE and current_desc:
                     
-                    # 1. 触发判断 (双重标准)
+                    # 1. 简单的筛选逻辑 (保留好样本和云端兜底样本)
+                    # 注意：这里我们放宽一点标准，把筛选留给离线脚本做，这里只负责存
                     should_save = False
-                    instruction_type = "Edge_Optimization"
                     
                     base_idx = action * 3
-                    # 特征索引1是 LinkCost，>0.9 是 Cloud
                     is_cloud = (base_idx + 1 < len(state)) and (state[base_idx + 1] > 0.9)
 
-                    if is_cloud:
-                        if reward > -10.0: should_save = True; instruction_type = "Cloud_Fallback"
-                    else:
-                        if reward > 30.0: should_save = True; instruction_type = "Edge_Optimization"
+                    # 只要 Reward 正常，都存下来，离线脚本再决定要不要 Top-5
+                    if is_cloud and reward > -15.0: 
+                        should_save = True
+                    elif not is_cloud and reward > 20.0: # 放宽到 20，离线时再卡 30
+                        should_save = True
                     
                     if should_save:
-                        # 2. 挖掘 Q 值 (RL 的内心世界)
+                        # 2. 获取 Q 值 (但不处理)
                         state_tensor = paddle.to_tensor(state, dtype='float32').unsqueeze(0)
                         with paddle.no_grad():
+                            # 注意使用 main_network
                             all_q_values = agent.main_network(state_tensor).numpy()[0]
                         
-                        # 3. 剔除无效节点 (Mask)
-                        masked_q = all_q_values.copy()
-                        for i, valid in enumerate(mask):
-                            if not valid: masked_q[i] = -1e9 # 负无穷
-                        
-                        # 4. 提取 Top-5 ID (从大到小排序)
-                        K = 5
-                        top_k_ids = np.argsort(masked_q)[-K:][::-1].tolist()
-                        
-                        # 5. 保存 Top-K 列表
-                        exp_manager.save_llm_data(current_desc, top_k_ids, reward, instruction_type)
+                        # 3. 提取映射表
+                        node_ids_map = info.get('node_ids', [])
+
+                        # 4. 存裸数据 (毫秒级完成，不阻塞训练)
+                        exp_manager.save_raw_metadata(
+                            current_desc, 
+                            node_ids_map, 
+                            all_q_values, 
+                            mask, 
+                            action, 
+                            reward
+                        )
                 # =================================================================
 
                 if done:
@@ -371,12 +344,15 @@ def train_agent():
                 state = next_state
                 mask = next_mask
                 current_desc = next_info.get('description', "") 
-
+                TRAIN_FREQUENCY = 10
                 # 训练网络
                 if episode >= START_TRAIN_EPISODE and len(agent.memory) >= BATCH_SIZE:
-                    loss_val = agent.train()
-                    if loss_val is not None:
-                        episode_losses.append(loss_val)
+                    if step % TRAIN_FREQUENCY == 0:  
+                        loss_val = agent.train()
+                        if loss_val is not None: episode_losses.append(loss_val)
+                    # loss_val = agent.train()
+                    # if loss_val is not None:
+                    #     episode_losses.append(loss_val)
                 
                 if step > (ACTION_DIM * 5): 
                     break

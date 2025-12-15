@@ -35,6 +35,7 @@ class EnvironmentClient:
                 
             # 解析状态和掩码
             state, mask = self._parse(ns)
+            node_ids_map = ns.get('nodeIds', [])
             
             # 提取描述信息 (用于 LLM)
             description = ns.get('description', "")
@@ -42,7 +43,10 @@ class EnvironmentClient:
             if not description:
                 description = data.get('description', "")
                 
-            info = {"description": description}
+            info = {
+                "description": description,
+                "node_ids": node_ids_map 
+            }
             
             return state, mask, info # [修复] 返回 3 个值
             
@@ -50,6 +54,28 @@ class EnvironmentClient:
             print(f"Reset error: {e}")
             return None, None, {} # [修复] 异常时也返回 3 个值
 
+    # def step(self, action):
+    #     try:
+    #         resp = self.session.post(f"{self.base_url}/step", json={'action': int(action)}, timeout=10)
+    #         data = resp.json()
+    #         ns = data.get('nextStateRepresentation', {})
+    #         state, mask = self._parse(ns)
+    #         reward = float(data.get('immediateReward', 0.0))
+    #         done = bool(data.get('done', False))
+    #         # [新增] 提取 ID 映射表
+    #         node_ids_map = ns.get('nodeIds', [])
+            
+    #         # [修改] 将 node_ids_map 放入 info
+    #         info = {
+    #             "description": ns.get('description', ""),
+    #             "node_ids": node_ids_map
+    #         }
+    #         # # 提取 LLM 描述
+    #         # info = {"description": ns.get('description', "")}
+    #         return state, mask, reward, done, info
+    #     except Exception as e:
+    #         print(f"Step error: {e}")
+    #         return None, None, 0, True, {}
     def step(self, action):
         try:
             resp = self.session.post(f"{self.base_url}/step", json={'action': int(action)}, timeout=10)
@@ -59,8 +85,23 @@ class EnvironmentClient:
             reward = float(data.get('immediateReward', 0.0))
             done = bool(data.get('done', False))
             
-            # 提取 LLM 描述
-            info = {"description": ns.get('description', "")}
+            # [新增] 提取 ID 映射表
+            node_ids_map = ns.get('nodeIds', [])
+            
+            
+            # 1. 优先从 nextStateRepresentation 获取描述
+            description = ns.get('description', "")
+            
+            # 2. 如果没有，尝试从最外层 data 获取 (这是 reset 里的兜底逻辑)
+            if not description:
+                description = data.get('description', "")
+
+            # 将修复后的 description 放入 info
+            info = {
+                "description": description, 
+                "node_ids": node_ids_map
+            }
+            
             return state, mask, reward, done, info
         except Exception as e:
             print(f"Step error: {e}")

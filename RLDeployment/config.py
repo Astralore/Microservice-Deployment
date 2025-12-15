@@ -37,4 +37,5 @@ MODEL_SAVE_FREQ = 50        # 模型权重保存频率 (以 Episodes 为单位)
 # --- 文件路径 ---
 DATA_LOG_FILE = 'rl_deployment_data.csv'   # (State, Action, Q-value) 数据记录文件
 DATASET_FILE = 'llm_finetuning_data.jsonl'
-MODEL_SAVE_PATH = 'dueling_dqn_model.pdparams' # 模型权重保存路径 (使用 .weights.h5)
+MODEL_SAVE_PATH = 'dueling_dqn_model.pdparams' # 模型权重保存路径
+RAW_DATA_FILE = 'raw_training_metadata.json'

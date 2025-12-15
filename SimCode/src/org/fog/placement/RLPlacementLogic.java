@@ -55,7 +55,10 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         List<Double> stateVector;
         List<Boolean> actionMask;
         String description;
-        StateRepresentation(List<Double> s, List<Boolean> m, String d) { stateVector=s; actionMask=m; description=d; }
+        List<Integer> nodeIds;
+        StateRepresentation(List<Double> s, List<Boolean> m, String d, List<Integer> ids) {
+            stateVector=s; actionMask=m; description=d; nodeIds=ids;
+        }
     }
 
     static class ActionResult {
@@ -321,7 +324,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
                     curr.moduleName, node.getName(), baseReward, transmissionReward, loadPenalty, reward);
 
             // 打印日志 (可选，如果不希望刷屏可以注释掉)
-            System.out.println(desc);
+//            System.out.println(desc);
 
         } else {
             // === 部署失败 ===
@@ -579,7 +582,17 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
     }
 
     String finalDesc = (isPreDecision && currentTask != null) ? generateEnvironmentDescription(currentTask) : "";
-    return new StateRepresentation(state, mask, finalDesc);
+    // [新增] 收集当前 deployableNodes 的 ID 顺序
+    List<Integer> currentIds = new ArrayList<>();
+    for (FogDevice dev : deployableNodes) {
+        currentIds.add(dev.getId());
+    }
+    // 如果有 Padding，补 -1
+    while (currentIds.size() < MAX_NODES) {
+        currentIds.add(-1);
+    }
+    // 修改 return 语句，传入 currentIds
+    return new StateRepresentation(state, mask, finalDesc, currentIds);
 }
 
     private PlacementLogicOutput generateFinalOutput() {
