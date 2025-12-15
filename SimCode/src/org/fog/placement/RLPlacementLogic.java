@@ -349,66 +349,141 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         currentRamLoad.put(nodeId, currentRamLoad.getOrDefault(nodeId, 0) + mod.getRam());
     }
 
-    // [增强版] 生成环境快照 (Prompt) - 补充 RAM 和 链路信息
-    private String generateEnvironmentDescription(QueuedModule curr) {
-        StringBuilder sb = new StringBuilder();
+//    // [增强版] 生成环境快照 (Prompt) - 补充 RAM 和 链路信息
+//    private String generateEnvironmentDescription(QueuedModule curr) {
+//        StringBuilder sb = new StringBuilder();
+//
+//        // 1. 任务基本需求
+//        sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
+//                curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
+//
+//        // 2. 链路上下文：告诉 LLM 前置服务在哪里
+//        String predecessorLoc = "Unknown";
+//        Application app = applicationInfo.get(curr.appId);
+//        if (app != null) {
+//            for (AppEdge edge : app.getEdges()) {
+//                // 找到指向当前模块的边 (Upstream)
+//                if (edge.getDestination().equals(curr.moduleName) && edge.getDirection() == Tuple.UP) {
+//                    String sourceName = edge.getSource();
+//                    String sourceKey = curr.appId + "_" + sourceName;
+//
+//                    // 处理特殊的源名称
+//                    if (sourceName.equals("client")) sourceKey = curr.appId + "_client";
+//                    else if (sourceName.startsWith("s-")) sourceKey = sourceName; // sensor
+//
+//                    if (currentPlacementMap.containsKey(sourceKey)) {
+//                        int prevNodeId = currentPlacementMap.get(sourceKey);
+//                        predecessorLoc = String.format("Node %d", prevNodeId);
+//                    } else {
+//                        predecessorLoc = "Not Placed Yet / Sensor";
+//                    }
+//                    break;
+//                }
+//            }
+//        }
+//        sb.append(String.format("Data Source (Predecessor) is located at: %s.\n", predecessorLoc));
+//
+//        // 3. 节点状态列表
+//        sb.append("Nodes Status (Top 15 relevant):\n");
+//        for (FogDevice node : deployableNodes) {
+//
+//            // CPU 信息
+//            double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
+//            double totalMips = node.getHost().getTotalMips();
+//            double freeMips = totalMips - currentMips;
+//
+//            // [新增] RAM 信息
+//            int totalRam = node.getHost().getRam();
+//            int usedRam = currentRamLoad.getOrDefault(node.getId(), 0);
+//            int freeRam = totalRam - usedRam;
+//
+//            // 过滤掉几乎不可用的节点，减少 Prompt 长度
+//            if (freeMips < 100 && !node.getName().contains("cloud")) continue;
+//
+//            String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
+//
+//            // [优化] 输出格式包含 RAM
+//            sb.append(String.format("- ID %d (%s): Free CPU %.0f/%.0f, Free RAM %d/%d.\n",
+//                    node.getId(), type, freeMips, totalMips, freeRam, totalRam));
+//        }
+//        return sb.toString();
+//    }
+// [增强版] 生成环境快照 (Prompt) - 补充 RAM 和 拓扑链路信息
+private String generateEnvironmentDescription(QueuedModule curr) {
+    StringBuilder sb = new StringBuilder();
 
-        // 1. 任务基本需求
-        sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
-                curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
+    // 1. 任务基本需求
+    sb.append(String.format("Current Task: %s (App %s). Requirements: %.0f MIPS, %d RAM.\n",
+            curr.moduleName, curr.appId, curr.moduleObj.getMips(), curr.moduleObj.getRam()));
 
-        // 2. 链路上下文：告诉 LLM 前置服务在哪里
-        String predecessorLoc = "Unknown";
-        Application app = applicationInfo.get(curr.appId);
-        if (app != null) {
-            for (AppEdge edge : app.getEdges()) {
-                // 找到指向当前模块的边 (Upstream)
-                if (edge.getDestination().equals(curr.moduleName) && edge.getDirection() == Tuple.UP) {
-                    String sourceName = edge.getSource();
-                    String sourceKey = curr.appId + "_" + sourceName;
+    // 2. 链路上下文：寻找前置节点
+    int prevNodeId = -1;
+    String predecessorLoc = "Unknown";
+    Application app = applicationInfo.get(curr.appId);
+    if (app != null) {
+        for (AppEdge edge : app.getEdges()) {
+            if (edge.getDestination().equals(curr.moduleName) && edge.getDirection() == Tuple.UP) {
+                String sourceName = edge.getSource();
+                String sourceKey = curr.appId + "_" + sourceName;
 
-                    // 处理特殊的源名称
-                    if (sourceName.equals("client")) sourceKey = curr.appId + "_client";
-                    else if (sourceName.startsWith("s-")) sourceKey = sourceName; // sensor
+                if (sourceName.equals("client")) sourceKey = curr.appId + "_client";
+                else if (sourceName.startsWith("s-")) sourceKey = sourceName;
 
-                    if (currentPlacementMap.containsKey(sourceKey)) {
-                        int prevNodeId = currentPlacementMap.get(sourceKey);
-                        predecessorLoc = String.format("Node %d", prevNodeId);
-                    } else {
-                        predecessorLoc = "Not Placed Yet / Sensor";
-                    }
-                    break;
+                if (currentPlacementMap.containsKey(sourceKey)) {
+                    prevNodeId = currentPlacementMap.get(sourceKey);
+                    predecessorLoc = String.format("Node %d", prevNodeId);
+                } else {
+                    predecessorLoc = "Not Placed Yet / Sensor";
                 }
+                break;
             }
         }
-        sb.append(String.format("Data Source (Predecessor) is located at: %s.\n", predecessorLoc));
-
-        // 3. 节点状态列表
-        sb.append("Nodes Status (Top 15 relevant):\n");
-        for (FogDevice node : deployableNodes) {
-
-            // CPU 信息
-            double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
-            double totalMips = node.getHost().getTotalMips();
-            double freeMips = totalMips - currentMips;
-
-            // [新增] RAM 信息
-            int totalRam = node.getHost().getRam();
-            int usedRam = currentRamLoad.getOrDefault(node.getId(), 0);
-            int freeRam = totalRam - usedRam;
-
-            // 过滤掉几乎不可用的节点，减少 Prompt 长度
-            if (freeMips < 100 && !node.getName().contains("cloud")) continue;
-
-            String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
-
-            // [优化] 输出格式包含 RAM
-            sb.append(String.format("- ID %d (%s): Free CPU %.0f/%.0f, Free RAM %d/%d.\n",
-                    node.getId(), type, freeMips, totalMips, freeRam, totalRam));
-        }
-        return sb.toString();
     }
+    sb.append(String.format("Data Source (Predecessor) is located at: %s.\n", predecessorLoc));
 
+    // 3. 节点状态列表 (必须包含 Link 标签)
+    sb.append("Nodes Status:\n");
+    for (FogDevice node : deployableNodes) {
+
+        double currentMips = currentCpuLoad.getOrDefault(node.getId(), 0.0);
+        double totalMips = node.getHost().getTotalMips();
+        double freeMips = totalMips - currentMips;
+
+        int totalRam = node.getHost().getRam();
+        int usedRam = currentRamLoad.getOrDefault(node.getId(), 0);
+        int freeRam = totalRam - usedRam;
+
+        // 过滤掉几乎不可用的节点 (除了 Cloud)
+        if (freeMips < 100 && !node.getName().contains("cloud")) continue;
+
+        String type = node.getName().contains("cloud") ? "Cloud" : "Edge";
+
+        // === [核心逻辑] 计算相对距离标签 ===
+        String linkStatus = "Remote";
+
+        if (node.getName().toLowerCase().contains("cloud")) {
+            linkStatus = "Cloud";
+        } else if (prevNodeId != -1) {
+            if (node.getId() == prevNodeId) {
+                linkStatus = "Local"; // 完美：同节点
+            } else {
+                FogDevice prevNode = fogDeviceMap.get(prevNodeId);
+                // 检查是否在同一个网关下 (ParentID 相同)
+                if (prevNode != null && node.getParentId() == prevNode.getParentId() && node.getParentId() != -1) {
+                    linkStatus = "Neighbor"; // 优秀：同网关
+                }
+            }
+        } else if (predecessorLoc.contains("Sensor") || predecessorLoc.contains("client")) {
+            // 简化处理：对于 Sensor/Client 直连的 Gateway 下的节点，通常是 Neighbor
+            // 这里暂且保守标记，具体可根据实际情况优化
+        }
+
+        // [输出] 增加 Link: XXX
+        sb.append(String.format("- ID %d (%s): Free CPU %.0f/%.0f, Free RAM %d/%d, Link: %s.\n",
+                node.getId(), type, freeMips, totalMips, freeRam, totalRam, linkStatus));
+    }
+    return sb.toString();
+}
 
 
 private StateRepresentation buildStateRepresentation(String logDesc, boolean isPreDecision) {

@@ -30,7 +30,7 @@ EPSILON_DECAY = 0.9995     # 探索率衰减因子 (每个 episode 结束后乘�
 EPSILON_MIN = 0.01     # 最小探索率
 
 # --- 训练过程控制 ---
-MAX_EPISODES = 25000         # 最大训练回合数 (Episodes)
+MAX_EPISODES = 20000         # 最大训练回合数 (Episodes)
 START_TRAIN_EPISODE = 50   # 在开始训练前收集的最小经验数量
 MODEL_SAVE_FREQ = 50        # 模型权重保存频率 (以 Episodes 为单位)
 

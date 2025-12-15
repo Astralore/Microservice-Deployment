@@ -41,47 +41,57 @@ class ExperimentManager:
     #                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     #         except Exception as e:
     #             print(f"Error saving dataset: {e}")
-    def save_llm_data(self, description, action, reward, instruction_type="Edge_Optimization"):
+    # 
+    def save_llm_data(self, description, action_data, reward, instruction_type="Edge_Optimization"):
         """
-        保存微调数据，支持不同的指令类型。
-        格式化为 CoT (Chain-of-Thought) 风格，引导 LLM 输出候选列表。
+        保存微调数据，格式为 Alpaca 标准格式：
+        {
+          "instruction": "...",
+          "input": "...",
+          "output": "..."
+        }
+        action_data: 可以是单个 int，也可以是 Top-K list。
         """
-        # 1. 根据场景构造 System Prompt (包含逻辑链)
+        # 1. 确保 action_data 是 Python 列表格式
+        if isinstance(action_data, (int, np.integer)):
+            action_list = [int(action_data)]
+        elif isinstance(action_data, list) or isinstance(action_data, np.ndarray):
+            action_list = [int(x) for x in action_data]
+        else:
+            action_list = []
+
+        # 2. 根据类型定义 Instruction (System Prompt 融合进 instruction 或 input，LLaMA-Factory 默认 Alpaca 格式无 system 字段)
+        # 为了适配您的格式要求，我们将 System 的角色定义放进 instruction
         if instruction_type == "Cloud_Fallback":
-            # 场景 A: 边缘资源耗尽，被迫去云端 (保底策略)
-            # 引导 LLM 学会：当边缘不可用时，果断选择云端，不要纠结延迟
             instruction = (
                 "Role: Robustness Scheduler.\n"
-                "Task: The edge layer is critically overloaded or lacks resources. Identify the appropriate Cloud node ID to ensure service availability.\n"
-                "Constraint: Ignore latency penalties, prioritize successful deployment over failure.\n"
-                "Output: A JSON list containing the valid Cloud node ID (e.g., [2])."
+                "Task: The edge layer is critically overloaded. Identify the Top-5 fallback nodes (Cloud/Edge) to ensure service availability.\n"
+                "Output: A JSON list of valid node IDs ranked by priority."
             )
         else:
-            # 场景 B: 边缘优化 (核心策略)
-            # 引导 LLM 学会：资源过滤 -> 亲和性排序 -> 负载均衡 的三步走逻辑
             instruction = (
                 "Role: Intelligent Edge Scheduler.\n"
-                "Task: Analyze the system state and select a list of optimal Edge Node IDs for the microservice.\n"
+                "Task: Analyze the system state and select the Top-5 optimal Edge Node IDs for the microservice.\n"
                 "Logic Chain:\n"
                 "1. FILTER: Exclude nodes where Free CPU < Req MIPS or Free RAM < Req RAM.\n"
-                "2. RANK: Prioritize nodes that match the 'Data Source' location (Predecessor) to minimize latency.\n"
-                "3. BALANCE: Avoid nodes that are nearly full (>90% load) to prevent congestion.\n"
-                "Output: A JSON list of the top valid node IDs (e.g., [id1, id2])."
+                "2. RANK: Prioritize nodes matching 'Link: Local' or 'Link: Neighbor' to minimize latency.\n"
+                "3. BALANCE: Avoid nodes with >90% load.\n"
+                "Output: A JSON list of the top 5 node IDs (e.g., [12, 5, 3, 8, 20])."
             )
 
-        # 2. 构造 Output
-        output_str = json.dumps([int(action)])
+        # 3. 构造 Entry
+        # output 字段必须是字符串
+        output_str = json.dumps(action_list)
 
         entry = {
             "instruction": instruction,
             "input": description,
-            "output": output_str, 
-            "reward": round(reward, 2),
-            "type": instruction_type 
+            "output": output_str
+            # "reward": reward  <-- 既然要严格对齐 Alpaca Demo 格式，这里不存 reward
+            # "type": instruction_type
         }
 
         try:
-            # 使用 'a' 模式追加写入 .jsonl 文件
             with open(self.dataset_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
@@ -277,43 +287,79 @@ def train_agent():
                 logger.log(state, action, q_value, episode, step)
                 
                 total_reward += reward
+                # if episode >= START_TRAIN_EPISODE and current_desc:
+                #     # 1. 判断当前 Action 是否为云端节点
+                #     # 根据 Java 端特征定义：Feature 2 (Index 1) 是 LinkCost。Cloud 的 LinkCost 通常为 1.0 (或 > 0.9)
+                #     base_idx = action * 3
+                #     is_cloud_action = False
+                    
+                #     # 确保索引不越界
+                #     if base_idx + 1 < len(state):
+                #         link_cost = state[base_idx + 1]
+                #         if link_cost > 0.9:
+                #             is_cloud_action = True
+                    
+                #     # 2. 应用双重阈值
+                #     should_save = False
+                #     instruction_type = "Edge_Optimization"
+
+                #     if is_cloud_action:
+                #         # [策略 A] 云端兜底：标准放宽
+                #         # 只要不是失败(-50)，哪怕是 -5 分（正常云端分），也是正确的兜底决策
+                #         if reward > -10.0:
+                #             should_save = True
+                #             instruction_type = "Cloud_Fallback"
+                #     else:
+                #         # [策略 B] 边缘优化：标准严格
+                #         # LLM 学习那些低延迟(+20)、低负载的优质边缘部署
+                #         # 设置 > 30 可以过滤掉严重过载或链路极差的边缘节点
+                #         if reward > 30.0:
+                #             should_save = True
+                #             instruction_type = "Edge_Optimization"
+                    
+                #     # 3. 执行保存
+                #     if should_save:
+                #         exp_manager.save_llm_data(current_desc, action, reward, instruction_type)
+
+                # # 保存微调数据
+                # if episode >= START_TRAIN_EPISODE and current_desc:
+                #     exp_manager.save_llm_data(current_desc, action, reward)
+                # =================================================================
+                # [核心修改] Top-5 推荐数据收集逻辑 (基于 Q 值)
+                # =================================================================
                 if episode >= START_TRAIN_EPISODE and current_desc:
-                    # 1. 判断当前 Action 是否为云端节点
-                    # 根据 Java 端特征定义：Feature 2 (Index 1) 是 LinkCost。Cloud 的 LinkCost 通常为 1.0 (或 > 0.9)
-                    base_idx = action * 3
-                    is_cloud_action = False
                     
-                    # 确保索引不越界
-                    if base_idx + 1 < len(state):
-                        link_cost = state[base_idx + 1]
-                        if link_cost > 0.9:
-                            is_cloud_action = True
-                    
-                    # 2. 应用双重阈值
+                    # 1. 触发判断 (双重标准)
                     should_save = False
                     instruction_type = "Edge_Optimization"
-
-                    if is_cloud_action:
-                        # [策略 A] 云端兜底：标准放宽
-                        # 只要不是失败(-50)，哪怕是 -5 分（正常云端分），也是正确的兜底决策
-                        if reward > -10.0:
-                            should_save = True
-                            instruction_type = "Cloud_Fallback"
-                    else:
-                        # [策略 B] 边缘优化：标准严格
-                        # LLM 学习那些低延迟(+20)、低负载的优质边缘部署
-                        # 设置 > 30 可以过滤掉严重过载或链路极差的边缘节点
-                        if reward > 30.0:
-                            should_save = True
-                            instruction_type = "Edge_Optimization"
                     
-                    # 3. 执行保存
-                    if should_save:
-                        exp_manager.save_llm_data(current_desc, action, reward, instruction_type)
+                    base_idx = action * 3
+                    # 特征索引1是 LinkCost，>0.9 是 Cloud
+                    is_cloud = (base_idx + 1 < len(state)) and (state[base_idx + 1] > 0.9)
 
-                # 保存微调数据
-                if episode >= START_TRAIN_EPISODE and current_desc:
-                    exp_manager.save_llm_data(current_desc, action, reward)
+                    if is_cloud:
+                        if reward > -10.0: should_save = True; instruction_type = "Cloud_Fallback"
+                    else:
+                        if reward > 30.0: should_save = True; instruction_type = "Edge_Optimization"
+                    
+                    if should_save:
+                        # 2. 挖掘 Q 值 (RL 的内心世界)
+                        state_tensor = paddle.to_tensor(state, dtype='float32').unsqueeze(0)
+                        with paddle.no_grad():
+                            all_q_values = agent.main_network(state_tensor).numpy()[0]
+                        
+                        # 3. 剔除无效节点 (Mask)
+                        masked_q = all_q_values.copy()
+                        for i, valid in enumerate(mask):
+                            if not valid: masked_q[i] = -1e9 # 负无穷
+                        
+                        # 4. 提取 Top-5 ID (从大到小排序)
+                        K = 5
+                        top_k_ids = np.argsort(masked_q)[-K:][::-1].tolist()
+                        
+                        # 5. 保存 Top-K 列表
+                        exp_manager.save_llm_data(current_desc, top_k_ids, reward, instruction_type)
+                # =================================================================
 
                 if done:
                     if np.any(mask): 

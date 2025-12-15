@@ -82,7 +82,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:\\Code\\Microservice_Deployment\\SimCode\\src\\org\\fog\\test\\perfeval\\ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:\\Code\\Microservice-Deployment\\SimCode\\src\\org\\fog\\test\\perfeval\\ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();
