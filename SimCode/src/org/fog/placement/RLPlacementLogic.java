@@ -343,7 +343,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
 
         // 生成下一个状态
         // 注意：这里调用的是 buildStateRepresentation
-        return new ActionResult(buildStateRepresentation(desc, false), reward, done);
+        return new ActionResult(buildStateRepresentation(desc, true), reward, done);
     }
 
     private void updateSimulatedLoad(int nodeId, AppModule mod) {

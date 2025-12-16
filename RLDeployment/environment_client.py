@@ -76,27 +76,25 @@ class EnvironmentClient:
     #     except Exception as e:
     #         print(f"Step error: {e}")
     #         return None, None, 0, True, {}
+    #
     def step(self, action):
         try:
             resp = self.session.post(f"{self.base_url}/step", json={'action': int(action)}, timeout=10)
             data = resp.json()
+            
             ns = data.get('nextStateRepresentation', {})
             state, mask = self._parse(ns)
             reward = float(data.get('immediateReward', 0.0))
             done = bool(data.get('done', False))
             
-            # [新增] 提取 ID 映射表
             node_ids_map = ns.get('nodeIds', [])
             
-            
-            # 1. 优先从 nextStateRepresentation 获取描述
+            # --- [核心修复] ---
             description = ns.get('description', "")
-            
-            # 2. 如果没有，尝试从最外层 data 获取 (这是 reset 里的兜底逻辑)
             if not description:
-                description = data.get('description', "")
-
-            # 将修复后的 description 放入 info
+                description = data.get('description', "") # 兜底逻辑
+            # -----------------
+            
             info = {
                 "description": description, 
                 "node_ids": node_ids_map
@@ -106,8 +104,6 @@ class EnvironmentClient:
         except Exception as e:
             print(f"Step error: {e}")
             return None, None, 0, True, {}
-
-    # --- [核心修复] 补全缺失的方法 ---
     def get_final_reward(self):
         """获取 Episode 结束时的最终奖励"""
         try:

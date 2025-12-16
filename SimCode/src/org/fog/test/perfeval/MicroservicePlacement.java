@@ -58,14 +58,14 @@ public class MicroservicePlacement {
 //    static Integer[] edgeNodeCpus = new Integer[]{4800, 5000, 5200, 4800, 5500, 6000, 5000, 4800, 5200, 5500};
 //    static Integer[] edgeNodeRam = new Integer[]{4096, 8192, 4096, 4096, 8192, 8192, 8192, 4096, 8192, 4096};
     static Integer[] edgeNodeCpus = new Integer[]{
-            2200, 2400, 2000, 2200, 2500,
-            2200, 2400, 2000, 2200, 2500
+            3500, 3800, 3200, 3500, 4000,
+            3500, 3800, 3200, 3500, 4000
     };
 
-    // RAM 同理，任务通常 1G-2G。设置为 3G-4G，很容易捉襟见肘。
+    // RAM 也稍微给多点
     static Integer[] edgeNodeRam = new Integer[]{
-            3072, 4096, 3072, 3072, 4096,
-            3072, 4096, 3072, 3072, 4096
+            4096, 4096, 4096, 4096, 4096,
+            4096, 4096, 4096, 4096, 4096
     };
     static Double[] edgeNodeBusyPower = new Double[]{220.0, 230.0, 240.0, 220.0, 250.0, 280.0, 230.0, 220.0, 240.0, 250.0};
     static Double[] edgeNodeIdlePower = new Double[]{110.0, 115.0, 120.0, 110.0, 125.0, 140.0, 115.0, 110.0, 120.0, 125.0};
@@ -92,7 +92,7 @@ public class MicroservicePlacement {
             createFogDevices(1, appId);
 
             // 读取配置
-            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:\\Code\\Microservice_Deployment\\SimCode\\src\\org\\fog\\test\\perfeval\\ApplicationConfig.json");
+            List<Map<String, Object>> appParamsList = parseApplicationConfig("D:\\Code\\Microservice-Deployment\\SimCode\\src\\org\\fog\\test\\perfeval\\ApplicationConfig.json");
             if (appParamsList == null || appParamsList.isEmpty()) throw new RuntimeException("Config empty!");
 
             List<Application> applications = new ArrayList<>();

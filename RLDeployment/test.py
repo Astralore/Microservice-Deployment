@@ -9,7 +9,7 @@ from config import MODEL_SAVE_PATH
 
 # --- 配置区域 ---
 COLLECT_DATA_FILE = "raw_cloud_data.json"
-NUM_EPISODES = 500  
+NUM_EPISODES = 20  
 # ----------------
 
 def save_raw_metadata(file_path, description, node_ids_map, q_values, mask, action, reward):
@@ -19,7 +19,8 @@ def save_raw_metadata(file_path, description, node_ids_map, q_values, mask, acti
         "q_vals": q_values.tolist(),
         "mask": mask.tolist(),
         "act": int(action),
-        "rew": float(reward)
+        "rew": round(float(reward), 4), # [修改] 统一保留 4 位小数，与 train.py 一致
+        "ts": time.time()               # [新增] 补上时间戳，虽然不用，但保持格式整齐
     }
     with open(file_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
