@@ -72,50 +72,98 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
 
     public RLPlacementLogic(int fonId) {}
 
+//    @Override
+//    public PlacementLogicOutput run(List<FogDevice> fogDevices, Map<String, Application> applicationInfo,
+//                                    Map<Integer, Map<String, Double>> resourceAvailability, List<PlacementRequest> pr) {
+//
+//        // [修复] 绕过 Controller，获取全量 49 个节点
+//        List<FogDevice> allDevices = new ArrayList<>();
+//        for (Object entity : CloudSim.getEntityList()) {
+//            if (entity instanceof FogDevice) allDevices.add((FogDevice) entity);
+//        }
+//        this.fogDevices = allDevices;
+//
+//        this.applicationInfo = applicationInfo;
+//        this.placementRequests = pr;
+//
+//        this.fogDeviceMap = new HashMap<>();
+//        for (FogDevice d : this.fogDevices) fogDeviceMap.put(d.getId(), d);
+//
+//        this.deployableNodes = new ArrayList<>();
+//        for (FogDevice dev : this.fogDevices) {
+//            if (dev.getLevel() <= 2) deployableNodes.add(dev);
+//        }
+//        this.deployableNodes.sort(Comparator.comparingInt(FogDevice::getId));
+//
+//        System.out.println("\n=== RL Logic Initialized (FINAL FIXED) ===");
+//        System.out.println("Total FogDevices: " + this.fogDevices.size());
+//        System.out.println("Deployable Nodes: " + deployableNodes.size());
+//        System.out.println("Waiting for Python Agent...");
+//
+//        System.out.println("\n=== Node Mapping (Action Index -> Node ID) ===");
+//        for (int i = 0; i < deployableNodes.size(); i++) {
+//            FogDevice dev = deployableNodes.get(i);
+//            String type = "EDGE";
+//            if (dev.getLevel() == 0) type = "CLOUD";
+//            else if (dev.getLevel() == 1) type = "GATEWAY";
+//
+//            // 使用 %d 来打印整数 (RAM)，这是我们当前最需要确认的信息
+//            System.out.printf("Action %d -> ID %d (%s) | MIPS: %d | RAM: %d\n",
+//                    i,
+//                    dev.getId(),
+//                    type,
+//                    (int) dev.getHost().getTotalMips(),
+//                    dev.getHost().getRam());
+//        }
+//        System.out.println("==============================================\n");
+//
+//        startRestApiServerOnce();
+//
+//        synchronized(this) {
+//            try { this.wait(); } catch (InterruptedException e) { e.printStackTrace(); }
+//        }
+//        return generateFinalOutput();
+//    }
+    // [RLPlacementLogic.java]
+
+    // ... (前面的成员变量保持不变) ...
+
     @Override
     public PlacementLogicOutput run(List<FogDevice> fogDevices, Map<String, Application> applicationInfo,
                                     Map<Integer, Map<String, Double>> resourceAvailability, List<PlacementRequest> pr) {
 
-        // [修复] 绕过 Controller，获取全量 49 个节点
+        // 1. 获取全量节点
         List<FogDevice> allDevices = new ArrayList<>();
         for (Object entity : CloudSim.getEntityList()) {
             if (entity instanceof FogDevice) allDevices.add((FogDevice) entity);
         }
         this.fogDevices = allDevices;
-
         this.applicationInfo = applicationInfo;
         this.placementRequests = pr;
 
         this.fogDeviceMap = new HashMap<>();
         for (FogDevice d : this.fogDevices) fogDeviceMap.put(d.getId(), d);
 
-        this.deployableNodes = new ArrayList<>();
-        for (FogDevice dev : this.fogDevices) {
-            if (dev.getLevel() <= 2) deployableNodes.add(dev);
-        }
-        this.deployableNodes.sort(Comparator.comparingInt(FogDevice::getId));
+        // ================================================================
+        // [核心修改] 使用“拓扑锁定”排序
+        // 保证 Action 0-48 永远是训练时的那些节点，新节点排在 Action 49+
+        // ================================================================
+        this.deployableNodes = getOrderedDeployableNodes(this.fogDevices);
 
-        System.out.println("\n=== RL Logic Initialized (FINAL FIXED) ===");
+        System.out.println("\n=== RL Logic Initialized (Topology Locked for Generalization) ===");
         System.out.println("Total FogDevices: " + this.fogDevices.size());
         System.out.println("Deployable Nodes: " + deployableNodes.size());
-        System.out.println("Waiting for Python Agent...");
 
-        System.out.println("\n=== Node Mapping (Action Index -> Node ID) ===");
+        // 打印映射表，方便你调试时确认 ID >= 50 的是新节点
+        System.out.println("\n=== Node Mapping Verification ===");
         for (int i = 0; i < deployableNodes.size(); i++) {
             FogDevice dev = deployableNodes.get(i);
-            String type = "EDGE";
-            if (dev.getLevel() == 0) type = "CLOUD";
-            else if (dev.getLevel() == 1) type = "GATEWAY";
-
-            // 使用 %d 来打印整数 (RAM)，这是我们当前最需要确认的信息
-            System.out.printf("Action %d -> ID %d (%s) | MIPS: %d | RAM: %d\n",
-                    i,
-                    dev.getId(),
-                    type,
-                    (int) dev.getHost().getTotalMips(),
-                    dev.getHost().getRam());
+            String tag = (i >= 49) ? " [NEW]" : ""; // 假设训练时有49个节点
+            if (i < 5 || i >= 45) { // 只打印头尾，避免刷屏
+                System.out.printf("Action %d -> ID %d (%s)%s\n", i, dev.getId(), dev.getName(), tag);
+            }
         }
-        System.out.println("==============================================\n");
+        System.out.println("=================================\n");
 
         startRestApiServerOnce();
 
@@ -124,6 +172,51 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         }
         return generateFinalOutput();
     }
+
+    // --- [新增辅助方法 1] ---
+    private List<FogDevice> getOrderedDeployableNodes(List<FogDevice> allDevices) {
+        List<FogDevice> orderedList = new ArrayList<>();
+        Map<String, FogDevice> nameMap = new HashMap<>();
+
+        for (FogDevice dev : allDevices) {
+            if (dev.getLevel() <= 2) nameMap.put(dev.getName(), dev);
+        }
+
+        // 1. 先填满训练时的“老坑位” (Cloud + 4 Gateways + 11 Edges/Gateway)
+        addIfPresent(orderedList, nameMap, "cloud"); // Action 0
+
+        int trainGateways = 4;
+        int trainNodesPerGateway = 11; // ！！！必须写死为训练时的数字 (11)！！！
+
+        for (int i = 0; i < trainGateways; i++) {
+            addIfPresent(orderedList, nameMap, "gateway-" + i);
+            for (int j = 0; j < trainNodesPerGateway; j++) {
+                addIfPresent(orderedList, nameMap, "edge-node-" + i + "-" + j);
+            }
+        }
+
+        // 2. 再把多出来的“新节点”追加到后面
+        List<FogDevice> newNodes = new ArrayList<>();
+        for (FogDevice dev : nameMap.values()) {
+            if (!orderedList.contains(dev)) {
+                newNodes.add(dev);
+            }
+        }
+        // 按 ID 排序，保证确定性
+        newNodes.sort(Comparator.comparingInt(FogDevice::getId));
+        orderedList.addAll(newNodes);
+
+        return orderedList;
+    }
+
+    // --- [新增辅助方法 2] ---
+    private void addIfPresent(List<FogDevice> list, Map<String, FogDevice> map, String name) {
+        if (map.containsKey(name)) {
+            list.add(map.get(name));
+        }
+    }
+
+    // ... (其他方法如 executeAction, startRestApiServerOnce 保持不变) ...
 
     private void resetInternalState(List<PlacementRequest> requests) {
         // 1. 重置核心数据结构

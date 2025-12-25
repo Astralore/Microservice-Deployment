@@ -11,7 +11,7 @@ from datetime import datetime
 OLD_EDGE_FILE = "D:/Code/MD_DATA/experiments/20251215_133758/raw_training_metadata.json"
 
 # 2. 新的 Cloud 数据路径 (test.py 收集的)
-NEW_CLOUD_FILE = "D:/Code/Microservice-Deployment/RLDeployment/raw_cloud_data.json"
+NEW_CLOUD_FILE = "D:/Code/Microservice_Deployment/RLDeployment/raw_cloud_data.json"
 
 RAW_FILES = [OLD_EDGE_FILE, NEW_CLOUD_FILE]
 
