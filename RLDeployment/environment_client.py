@@ -25,12 +25,10 @@ class EnvironmentClient:
             data = resp.json()
             
             # 兼容逻辑：尝试从不同位置获取状态数据
-            # 有些 Java 实现直接返回 stateVector，有些包裹在 nextStateRepresentation 中
             ns = data
             if 'nextStateRepresentation' in data:
                 ns = data['nextStateRepresentation']
             elif 'stateVector' not in data:
-                # 如果既没有 nextStateRepresentation 也没有 stateVector，可能是包裹在 data 自身
                 pass 
                 
             # 解析状态和掩码
@@ -139,18 +137,46 @@ class EnvironmentClient:
         # 2. 解析动作掩码
         m = np.array(data.get('actionMask', []), dtype=bool)
         
-        # [修复] Mask Padding
+        # Mask Padding
         if m.shape[0] < ACTION_DIM:
-            # 计算需要补多少个 False
             pad_len = ACTION_DIM - m.shape[0]
-            # 在末尾补 False (表示这些补出来的节点不可用)
             padding_m = np.zeros(pad_len, dtype=bool)
             m = np.concatenate([m, padding_m])
         elif m.shape[0] > ACTION_DIM:
             m = m[:ACTION_DIM]
             
         return s, m
+# --- [新增] 自动化实验接口 ---
+    def start_simulation(self):
+        try:
+            self.session.get(f"{self.base_url}/start_simulation", timeout=5)
+            print(">>> Triggered Java Simulation...")
+        except Exception as e:
+            print(f"Start Sim error: {e}")
 
+    def get_physical_metrics(self):
+        print(">>> Waiting for Java Simulation Results...", end="")
+        while True:
+            try:
+                resp = self.session.get(f"{self.base_url}/get_results", timeout=5)
+                data = resp.json()
+                if data.get("status") == "finished":
+                    print(" Done!")
+                    return float(data.get("energy", -1)), float(data.get("makespan", -1))
+                else:
+                    print(".", end="", flush=True)
+                    time.sleep(2)
+            except Exception as e:
+                print(f"Polling error: {e}")
+                time.sleep(2)
+
+    def shutdown_java(self):
+        try:
+            self.session.get(f"{self.base_url}/shutdown", timeout=2)
+            print(">>> Sent Shutdown Signal.")
+        except:
+            pass
+    # ----------------------------
     def stop_server(self):
         try: self.session.get(f"{self.base_url}/stop", timeout=1)
         except: pass

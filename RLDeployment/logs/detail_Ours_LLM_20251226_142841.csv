@@ -1,0 +1,4 @@
+Step,Reward,Action,Link_Cost,Decision_Type
+1,-20.00,51,0.50,RL
+2,60.00,8,0.20,RL
+3,70.00,8,0.00,RL

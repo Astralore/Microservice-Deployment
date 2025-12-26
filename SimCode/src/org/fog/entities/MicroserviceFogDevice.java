@@ -223,6 +223,12 @@ public class MicroserviceFogDevice extends FogDevice {
             tuple.setVmId(vmId);
             tuple.addToTraversedMicroservices(getId(), tuple.getDestModuleName());
 
+//            updateTimingsOnReceipt(tuple);
+            if (!getApplicationMap().containsKey(tuple.getAppId())) {
+                // System.out.println("DEBUG: Dropped phantom tuple for " + tuple.getAppId() + " on " + getName());
+                return; // 直接返回，不要执行 executeTuple！
+            }
+            // 只有 App 存在时，才进行统计和执行
             updateTimingsOnReceipt(tuple);
 
             executeTuple(ev, tuple.getDestModuleName());
@@ -256,8 +262,12 @@ public class MicroserviceFogDevice extends FogDevice {
                             tuple.setVmId(vmId);
                             //Logger.error(getName(), "Executing tuple for operator " + moduleName);
 
-                            updateTimingsOnReceipt(tuple);
+//                            updateTimingsOnReceipt(tuple);
+                            if (!getApplicationMap().containsKey(tuple.getAppId())) {
+                                return;
+                            }
 
+                            updateTimingsOnReceipt(tuple);
                             executeTuple(ev, tuple.getDestModuleName());
 
                             return;

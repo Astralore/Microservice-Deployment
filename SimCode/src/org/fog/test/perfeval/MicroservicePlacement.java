@@ -31,6 +31,7 @@ import org.fog.entities.Sensor;
 import org.fog.entities.Tuple;
 import org.fog.placement.MicroservicesController;
 import org.fog.placement.PlacementLogicFactory;
+import org.fog.placement.RLPlacementLogic;
 import org.fog.policy.AppModuleAllocationPolicy;
 import org.fog.scheduler.StreamOperatorScheduler;
 import org.fog.utils.FogLinearPowerModel;
@@ -48,8 +49,8 @@ public class MicroservicePlacement {
     static List<Actuator> actuators = new ArrayList<Actuator>();
 
     static int edgeGateways = 4;
-//    static Integer[] edgeNodesPerGateway = new Integer[]{11, 11, 11, 11};
-    static Integer[] edgeNodesPerGateway = new Integer[]{14, 14, 14, 14};
+    static Integer[] edgeNodesPerGateway = new Integer[]{11, 11, 11, 11};
+//    static Integer[] edgeNodesPerGateway = new Integer[]{14, 14, 14, 14};
     // ... (其他静态变量保持不变) ...
     static Integer[] endDevicesPerEdgeNode = new Integer[]{3, 2, 3, 2, 1, 1};
     private static int edgeNodeIndex = 0;
@@ -79,7 +80,6 @@ public class MicroservicePlacement {
     static boolean trace_flag = false;
 
     public static void main(String[] args) {
-        // ... (Main 方法逻辑保持不变，确保使用了循环创建 40 个应用的代码) ...
         System.out.println(">>> CODE UPDATED: EdgeGateways = " + edgeGateways);
         Log.printLine("Starting MicroservicePlacement...");
 
@@ -173,11 +173,58 @@ public class MicroservicePlacement {
             }
             System.out.println("DEBUG: >>>>>> SUCCESS! Bound " + bindCount + " sensors. <<<<<<");
             // =================================================================
-            TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
-            CloudSim.startSimulation();
-            CloudSim.stopSimulation();
+//            TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
+//            CloudSim.startSimulation();
+//            CloudSim.stopSimulation();
+//
+//            Log.printLine("Simulation finished!");
+            // [核心修改] 根据模式决定后续行为
+            // =========================================================
+            if (RLPlacementLogic.IS_EVAL_MODE) {
+                System.out.println(">>> [Eval Mode] Starting CloudSim Simulation...");
+                TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
 
-            Log.printLine("Simulation finished!");
+                // 这行代码执行后，Java 会在 RLPlacementLogic.run() 内部卡住，等待 Python 连接
+                CloudSim.startSimulation();
+                CloudSim.stopSimulation();
+                Log.printLine("Simulation finished!");
+
+                // --- 2. 计算物理指标 (仿真跑完后才有数据) ---
+                double totalEnergy = 0.0;
+                for (FogDevice device : fogDevices) {
+                    totalEnergy += device.getEnergyConsumption();
+                }
+                double totalEnergyKJ = totalEnergy / 1000.0;
+                // 使用 CloudSim.clock() 获取准确的仿真耗时
+                double makespan = CloudSim.clock();
+
+                System.out.printf(">>> [Result] Energy: %.4f kJ | Makespan: %.2f s\n", totalEnergyKJ, makespan);
+
+                // --- 3. 回填结果给 RLPlacementLogic 供 Python 读取 ---
+                RLPlacementLogic.finalEnergy = totalEnergyKJ;
+                RLPlacementLogic.finalMakespan = makespan;
+                RLPlacementLogic.simulationFinished = true;
+
+                System.out.println(">>> [Eval Mode] Waiting for Python to collect results...");
+
+                // --- 4. 阻塞主线程，直到收到 Python 的 /shutdown 请求 ---
+                synchronized(RLPlacementLogic.shutdownLock) {
+                    try {
+                        RLPlacementLogic.shutdownLock.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                System.out.println(">>> [Eval Mode] Shutdown signal received. Exiting.");
+                System.exit(0);
+
+            } else {
+                // 训练模式逻辑...
+                System.out.println(">>> [Train Mode] Continuous Simulation...");
+                TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
+                CloudSim.startSimulation();
+                CloudSim.stopSimulation();
+            }
         } catch (Exception e) {
             e.printStackTrace();
             Log.printLine("Unwanted errors happened");
@@ -216,8 +263,8 @@ public class MicroservicePlacement {
         // 拓扑顺序: Sensor -> Client -> Svc[0] -> Svc[1] ... -> Svc[N] -> Client -> Actuator
 
         // 4.1 Sensor -> Client
-        application.addAppEdge("sensor", "client", 100, 200, "sensor_data", Tuple.UP, AppEdge.SENSOR);
-
+//        application.addAppEdge("sensor", "client", 100, 200, "sensor_data", Tuple.UP, AppEdge.SENSOR);
+        application.addAppEdge("sensor", "client", 100, 200, "sensor", Tuple.UP, AppEdge.SENSOR);
         // 4.2 Client -> First Service
         Map<String, Object> firstSvc = servicesConfig.get(0);
         String firstSvcName = (String) firstSvc.get("name");
@@ -227,8 +274,8 @@ public class MicroservicePlacement {
         application.addAppEdge("client", firstSvcName, firstInBw, 1000, clientToFirstTuple, Tuple.UP, AppEdge.MODULE);
 
         // 映射: sensor_data -> c_first
-        application.addTupleMapping("client", "sensor_data", clientToFirstTuple, new FractionalSelectivity(1.0));
-
+//        application.addTupleMapping("client", "sensor_data", clientToFirstTuple, new FractionalSelectivity(1.0));
+        application.addTupleMapping("client", "sensor", clientToFirstTuple, new FractionalSelectivity(1.0));
         // 4.3 Service -> Service (中间链条)
         for (int i = 0; i < servicesConfig.size() - 1; i++) {
             Map<String, Object> currSvc = servicesConfig.get(i);

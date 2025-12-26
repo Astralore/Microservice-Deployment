@@ -25,7 +25,22 @@ import java.util.concurrent.Executors;
 
 public class RLPlacementLogic implements MicroservicePlacementLogic {
 
-    private static final int MAX_NODES = 50;
+    // 训练时请手动改为 false
+    // ==========================================================
+    public static boolean IS_EVAL_MODE = true;
+
+    // [新增] 用于控制实验一致性的静态变量
+    private static final long BASE_SEED = 99999;
+    private static int resetCounter = 0;
+
+    // [新增] 用于存储物理仿真结果 (供 Python 读取)
+    public static volatile double finalEnergy = -1.0;
+    public static volatile double finalMakespan = -1.0;
+    public static volatile boolean simulationFinished = false;
+
+    // [新增] 用于控制主线程退出的锁
+    public static final Object shutdownLock = new Object();
+    private static final int MAX_NODES = 100;
     private static final int API_PORT = 4567;
 
     private List<FogDevice> fogDevices;
@@ -67,7 +82,13 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         boolean done;
         ActionResult(StateRepresentation s, double r, boolean d) { nextStateRepresentation=s; immediateReward=r; done=d; }
     }
-
+    //新增
+    static class SimResult {
+        double energy;
+        double makespan;
+        String status;
+        SimResult(double e, double m, String s) { energy=e; makespan=m; status=s; }
+    }
     static class FinalResult { double finalReward; FinalResult(double r) { finalReward=r; } }
 
     public RLPlacementLogic(int fonId) {}
@@ -132,6 +153,10 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
     public PlacementLogicOutput run(List<FogDevice> fogDevices, Map<String, Application> applicationInfo,
                                     Map<Integer, Map<String, Double>> resourceAvailability, List<PlacementRequest> pr) {
 
+        finalEnergy = -1.0;
+        finalMakespan = -1.0;
+        simulationFinished = false;
+
         // 1. 获取全量节点
         List<FogDevice> allDevices = new ArrayList<>();
         for (Object entity : CloudSim.getEntityList()) {
@@ -144,8 +169,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         this.fogDeviceMap = new HashMap<>();
         for (FogDevice d : this.fogDevices) fogDeviceMap.put(d.getId(), d);
 
-        // ================================================================
-        // [核心修改] 使用“拓扑锁定”排序
         // 保证 Action 0-48 永远是训练时的那些节点，新节点排在 Action 49+
         // ================================================================
         this.deployableNodes = getOrderedDeployableNodes(this.fogDevices);
@@ -173,6 +196,12 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         return generateFinalOutput();
     }
 
+    public static void onSimulationComplete(double energy, double makespan) {
+        finalEnergy = energy;
+        finalMakespan = makespan;
+        simulationFinished = true;
+        System.out.println(">>> [RLPlacementLogic] Simulation Finished Signal Received. Energy: " + energy + " Time: " + makespan);
+    }
     // --- [新增辅助方法 1] ---
     private List<FogDevice> getOrderedDeployableNodes(List<FogDevice> allDevices) {
         List<FogDevice> orderedList = new ArrayList<>();
@@ -184,7 +213,6 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
 
         // 1. 先填满训练时的“老坑位” (Cloud + 4 Gateways + 11 Edges/Gateway)
         addIfPresent(orderedList, nameMap, "cloud"); // Action 0
-
         int trainGateways = 4;
         int trainNodesPerGateway = 11; // ！！！必须写死为训练时的数字 (11)！！！
 
@@ -216,8 +244,7 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         }
     }
 
-    // ... (其他方法如 executeAction, startRestApiServerOnce 保持不变) ...
-
+    // [修改] resetInternalState 方法
     private void resetInternalState(List<PlacementRequest> requests) {
         // 1. 重置核心数据结构
         this.placementQueue = new LinkedList<>();
@@ -226,49 +253,85 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
         this.currentRamLoad = new HashMap<>();
         this.currentModuleIndex = 0;
 
-        // 防止 Agent 死记硬背任务到达的顺序
+//        // [核心修改] 使用确定性随机种子
+//        // 这样每次实验(Run)的第一轮、第二轮生成的负载完全一致
+//        long currentSeed = BASE_SEED + resetCounter;
+//        Random rand = new Random(currentSeed);
+//        System.out.println("DEBUG: Resetting Environment with Deterministic Seed: " + currentSeed);
+//
+//        // 增加计数器，确保同一场实验内的下一轮 Episode 会有变化（避免死循环），
+//        // 但重启 Java 后会重置，从而保证 Baseline 和 Ours 面对的是同一组序列。
+//        resetCounter++;
+//
+//        // 2. 打乱请求 (使用相同的 Random 对象，保证打乱顺序一致)
+//        List<PlacementRequest> shuffledRequests = new ArrayList<>(requests);
+//        Collections.shuffle(shuffledRequests, rand);
+//
+//        // 3. 生成背景负载
+//        // maxBackgroundLoad 在 10% 到 40% 之间波动 (由种子决定)
+//        double maxBackgroundLoad = 0.1 + rand.nextDouble() * 0.2;
+//
+//        System.out.printf("DEBUG: Environment Difficulty (MaxLoad) = %.2f%%\n", maxBackgroundLoad * 100);
+//
+//        // 初始化节点负载
+//        for (FogDevice dev : deployableNodes) {
+//            double totalMips = dev.getHost().getTotalMips();
+//            double loadFactor = 0.0;
+//
+//            if (dev.getName().toLowerCase().contains("cloud")) {
+//                loadFactor = 0.01;
+//            } else if (dev.getName().toLowerCase().contains("gateway")) {
+//                loadFactor = 0.1 + rand.nextDouble() * 0.2;
+//            } else {
+//                // Edge 节点：确定性随机负载
+//                loadFactor = rand.nextDouble() * maxBackgroundLoad;
+//            }
+//
+//            currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
+//            currentRamLoad.put(dev.getId(), (int)(dev.getHost().getRam() * loadFactor));
+//        }
+        Random rand;
+        // [关键] 根据模式选择随机源
+        if (IS_EVAL_MODE) {
+            long currentSeed = BASE_SEED + resetCounter;
+            rand = new Random(currentSeed);
+            System.out.println("DEBUG: [Eval Mode] Reset with Fixed Seed: " + currentSeed);
+            resetCounter++;
+        } else {
+            rand = new Random(); // 训练模式用真随机
+            // System.out.println("DEBUG: [Train Mode] Reset with Random Seed");
+        }
+
+        // 使用同一个 rand 对象进行 shuffle 和 负载生成
         List<PlacementRequest> shuffledRequests = new ArrayList<>(requests);
-        Collections.shuffle(shuffledRequests, new Random());
+        Collections.shuffle(shuffledRequests, rand);
 
-        // 让每一轮 Episode 的"初始难度"都不同
-        // maxBackgroundLoad 在 10% 到 40% 之间波动
-        Random rand = new Random();
         double maxBackgroundLoad = 0.1 + rand.nextDouble() * 0.2;
+        System.out.printf("DEBUG: Environment Difficulty (MaxLoad) = %.2f%%\n", maxBackgroundLoad * 100);
 
-        // 2. 初始化节点负载
         for (FogDevice dev : deployableNodes) {
             double totalMips = dev.getHost().getTotalMips();
             double loadFactor = 0.0;
-
-            if (dev.getName().toLowerCase().contains("cloud")) {
-                loadFactor = 0.01; // Cloud 始终保持空闲
-            } else if (dev.getName().toLowerCase().contains("gateway")) {
-                loadFactor = 0.1 + rand.nextDouble() * 0.2; // Gateway 负载稍高
-            } else {
-                // Edge 节点：在 [0, maxBackgroundLoad] 之间随机
-                loadFactor = rand.nextDouble() * maxBackgroundLoad;
-            }
+            if (dev.getName().toLowerCase().contains("cloud")) loadFactor = 0.01;
+            else if (dev.getName().toLowerCase().contains("gateway")) loadFactor = 0.1 + rand.nextDouble() * 0.2;
+            else loadFactor = rand.nextDouble() * maxBackgroundLoad;
 
             currentCpuLoad.put(dev.getId(), totalMips * loadFactor);
             currentRamLoad.put(dev.getId(), (int)(dev.getHost().getRam() * loadFactor));
         }
-
-        // 3. 初始化预部署组件 (Client / Sensor)
-        // 注意：必须遍历 shuffledRequests，以保持随机性
+        // 4. 初始化预部署组件 (Client / Sensor)
         Set<String> placedModules = new HashSet<>();
-
         for (PlacementRequest req : shuffledRequests) {
             Application app = applicationInfo.get(req.getApplicationId());
+            if (app == null) continue;
 
             String clientKey = app.getAppId() + "_client";
             String sensorKey = "s-" + app.getAppId();
 
-            // 记录 Client/Sensor 的位置 (通常在端侧或网关)
             currentPlacementMap.put(clientKey, req.getGatewayDeviceId());
             currentPlacementMap.put(sensorKey, req.getGatewayDeviceId());
             currentPlacementMap.put(app.getAppId() + "_sensor", req.getGatewayDeviceId());
 
-            // 如果请求中包含已固定的微服务 (RL场景通常没有，但为了兼容保留)
             for (Map.Entry<String, Integer> entry : req.getPlacedMicroservices().entrySet()) {
                 String uniqueName = app.getAppId() + "_" + entry.getKey();
                 placedModules.add(uniqueName);
@@ -277,35 +340,28 @@ public class RLPlacementLogic implements MicroservicePlacementLogic {
             }
         }
 
-        // 4. 构建任务队列 (解析拓扑依赖)
-        // 核心逻辑：只有当前置依赖(Predecessor)已经部署了，当前服务才能进队列
+        // 5. 构建任务队列
         boolean progress = true;
         while (progress) {
             progress = false;
-            // 再次遍历打乱后的列表，保证进队列的顺序也是打乱的
             for (PlacementRequest req : shuffledRequests) {
                 Application app = applicationInfo.get(req.getApplicationId());
+                if (app == null) continue;
 
                 for (AppModule mod : app.getModules()) {
                     String uniqueName = app.getAppId() + "_" + mod.getName();
-                    // 如果已经部署过，跳过
                     if (placedModules.contains(uniqueName)) continue;
 
-                    // 检查依赖
                     boolean dependenciesMet = true;
                     for (AppEdge edge : app.getEdges()) {
                         if (edge.getDestination().equals(mod.getName()) && edge.getDirection() == Tuple.UP) {
                             String sourceUnique = app.getAppId() + "_" + edge.getSource();
-
-                            // 检查源头是否已在 map 中或 placedModules 集合中
-                            // 注意：Client/Sensor 已经在上面步骤 put 进 map 了
                             if (!currentPlacementMap.containsKey(sourceUnique) && !placedModules.contains(sourceUnique)) {
                                 dependenciesMet = false;
                                 break;
                             }
                         }
                     }
-                    // 依赖满足，加入待部署队列
                     if (dependenciesMet) {
                         placementQueue.add(new QueuedModule(mod.getName(), app.getAppId(), mod));
                         placedModules.add(uniqueName);
@@ -696,8 +752,9 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
         for (Map.Entry<String, Integer> entry : currentPlacementMap.entrySet()) {
             int nodeId = entry.getValue();
             String[] parts = entry.getKey().split("_", 2);
-            if (parts.length < 2 || parts[1].equals("sensor") || parts[1].equals("client") || parts[1].startsWith("s-")) continue;
-
+            if (parts.length < 2 || parts[1].equals("sensor") || parts[1].startsWith("s-")) {
+                continue;
+            }
             String appId = parts[0];
             String moduleName = parts[1];
             Application app = applicationInfo.get(appId);
@@ -774,18 +831,51 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
             nodeLoadCount.put(nodeId, nodeLoadCount.getOrDefault(nodeId, 0) + 1);
         }
 
-        System.out.println("\n=== 负载均衡分析 ===");
-        System.out.println("节点ID | 微服务数量 | 建议阈值");
-        for (Map.Entry<Integer, Integer> entry : nodeLoadCount.entrySet()) {
-            FogDevice dev = fogDeviceMap.get(entry.getKey());
-            if (dev != null) {
-                double realUsedMips = currentCpuLoad.getOrDefault(entry.getKey(), 0.0);
-                double estimatedUtil = realUsedMips / dev.getHost().getTotalMips();
-                String warning = estimatedUtil > 0.8 ? "⚠过载" : "✓正常";
-                System.out.printf("%6d | %10d | %s (预计利用率: %.1f%%)\n",
-                        entry.getKey(), entry.getValue(), warning, estimatedUtil * 100);
+//        System.out.println("\n=== 负载均衡分析 ===");
+//        System.out.println("节点ID | 微服务数量 | 建议阈值");
+//        for (Map.Entry<Integer, Integer> entry : nodeLoadCount.entrySet()) {
+//            FogDevice dev = fogDeviceMap.get(entry.getKey());
+//            if (dev != null) {
+//                double realUsedMips = currentCpuLoad.getOrDefault(entry.getKey(), 0.0);
+//                double estimatedUtil = realUsedMips / dev.getHost().getTotalMips();
+//                String warning = estimatedUtil > 0.8 ? "⚠过载" : "✓正常";
+//                System.out.printf("%6d | %10d | %s (预计利用率: %.1f%%)\n",
+//                        entry.getKey(), entry.getValue(), warning, estimatedUtil * 100);
+//            }
+//        }
+        System.out.println("\n=== 负载均衡分析 (含背景流量) ===");
+        // 增加显示 Total MIPS，让你看清背景负载
+        System.out.printf("%-6s | %-8s | %-20s | %-8s | %-6s%n", "NodeID", "SvcCount", "Used/Total MIPS", "Util%", "Status");
+        System.out.println("---------------------------------------------------------------");
+
+        // [关键修复] 遍历所有可部署节点 (deployableNodes)，而不是只遍历已部署的 map
+        // 这样你才能看到那些因为背景负载太高而被 RL 放弃的节点！
+        for (FogDevice dev : deployableNodes) {
+            int nodeId = dev.getId();
+
+            // 获取 RL 放置的服务数量 (如果没有就是 0)
+            int serviceCount = nodeLoadCount.getOrDefault(nodeId, 0);
+
+            // 获取 实际总负载 (背景 + RL)
+            // currentCpuLoad 在 resetInternalState 时已经包含了随机背景负载，所以这里的数据是真实的！
+            double realUsedMips = currentCpuLoad.getOrDefault(nodeId, 0.0);
+            double totalMips = dev.getHost().getTotalMips();
+            double util = realUsedMips / totalMips;
+
+            // 状态标记
+            String status = "✓OK";
+            if (util > 0.95) status = "🔥FULL";
+            else if (util > 0.8) status = "⚠High";
+
+            // 为了版面整洁，只打印利用率 > 1% 的节点 (过滤掉纯空的 Cloud 等)
+            // 这样你就能看到：虽然 SvcCount=0，但 Util% 可能是 80% (背景流量)
+            if (util > 0.01 || serviceCount > 0) {
+                System.out.printf("%-6d | %-8d | %8.0f / %-8.0f | %5.1f%%   | %s%n",
+                        nodeId, serviceCount, realUsedMips, totalMips, util * 100.0, status);
             }
         }
+        System.out.println("---------------------------------------------------------------");
+        // [修改结束] -----------------------------------------------------------
         // 计算共置指标
         Map<String, Set<Integer>> appDeploymentNodes = new HashMap<>();
         for (Map.Entry<String, Integer> entry : currentPlacementMap.entrySet()) {
@@ -801,7 +891,7 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
         System.out.println("\n=== 应用共置分析 ===");
         System.out.println("应用ID | 使用节点数 | 建议");
         for (Map.Entry<String, Set<Integer>> entry : appDeploymentNodes.entrySet()) {
-            String suggestion = entry.getValue().size() <= 2 ? "✓良好" : "⚠可优化";
+            String suggestion = entry.getValue().size() <= 2 ? "良好" : "可优化";
             System.out.printf("%6s | %10d | %s\n", entry.getKey(), entry.getValue().size(), suggestion);
         }
 
@@ -832,6 +922,41 @@ private StateRepresentation buildStateRepresentation(String logDesc, boolean isP
                     ex.getResponseBody().close();
                 }
             });
+            // [新增] /start_simulation 接口 (Eval模式用)
+            server.createContext("/start_simulation", ex -> {
+                String resp = "{\"status\":\"sim_started\"}";
+                ex.sendResponseHeaders(200, resp.length());
+                ex.getResponseBody().write(resp.getBytes());
+                ex.getResponseBody().close();
+                // 唤醒主线程去跑 CloudSim
+                synchronized(RLPlacementLogic.this) { RLPlacementLogic.this.notifyAll(); }
+            });
+
+            // [新增] /get_results 接口 (Eval模式用)
+            server.createContext("/get_results", ex -> {
+                SimResult res;
+                if (simulationFinished) {
+                    res = new SimResult(finalEnergy, finalMakespan, "finished");
+                } else {
+                    res = new SimResult(-1.0, -1.0, "running");
+                }
+                byte[] bytes = gson.toJson(res).getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(200, bytes.length);
+                ex.getResponseBody().write(bytes);
+                ex.getResponseBody().close();
+            });
+
+            // [新增] /shutdown 接口 (Eval模式用)
+            server.createContext("/shutdown", ex -> {
+                String resp = "{\"status\":\"shutdown\"}";
+                ex.sendResponseHeaders(200, resp.length());
+                ex.getResponseBody().write(resp.getBytes());
+                ex.getResponseBody().close();
+                server.stop(0);
+                System.out.println(">>> [Eval Mode] Shutdown signal received. Exiting.");
+                System.exit(0); // [关键] 强制杀掉进程，防止 CloudSim 线程卡死
+            });
+
             server.createContext("/get_final_reward", ex -> {
                 byte[] bytes = gson.toJson(new FinalResult(0.0)).getBytes(StandardCharsets.UTF_8);
                 ex.sendResponseHeaders(200, bytes.length);

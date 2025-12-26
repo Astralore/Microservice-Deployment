@@ -90,7 +90,7 @@ public class ControllerComponent {
 
     public void addServiceDiscoveryInfo(String microserviceName, Integer deviceID) {
         this.serviceDiscoveryInfo.addServiceDIscoveryInfo(microserviceName, deviceID);
-        System.out.println("Service Discovery Info ADDED (device:" + this.deviceId + ") for microservice :" + microserviceName + " , destDevice : " + deviceID);
+//        System.out.println("Service Discovery Info ADDED (device:" + this.deviceId + ") for microservice :" + microserviceName + " , destDevice : " + deviceID);
     }
 
     public int getDestinationDeviceId(String destModuleName) {

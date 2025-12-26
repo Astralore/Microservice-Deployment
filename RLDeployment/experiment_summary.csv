@@ -1,0 +1,2 @@
+Timestamp,Mode,Avg_Reward,Total_Energy_kJ,Makespan_sec,Cloud_Rate%,New_Node_Rate%,Detail_File
+20251226_172136,Baseline_RL,45.24,14017.3791,2000.00,9.4,0.0,logs\detail_Baseline_RL_20251226_172136.csv

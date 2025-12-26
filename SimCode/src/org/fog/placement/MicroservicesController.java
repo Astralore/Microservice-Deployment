@@ -247,7 +247,18 @@ protected void initiatePlacementRequestProcessing() {
                 printCostDetails();
                 printNetworkUsageDetails();
                 printQoSDetails();
-                System.exit(0);
+//                System.exit(0);
+                double totalEnergy = 0.0;
+                for(FogDevice d : fogDevices) {
+                    totalEnergy += d.getEnergyConsumption();
+                }
+                // 2. 获取仿真时间 (Makespan)
+                double finalMakespan = CloudSim.clock();
+
+                // 3. 直接通知 RLPlacementLogic (单位: kJ, sec)
+                RLPlacementLogic.onSimulationComplete(totalEnergy / 1000.0, finalMakespan);
+
+                // System.exit(0); // 依然保持注释掉
                 break;
         }
 
